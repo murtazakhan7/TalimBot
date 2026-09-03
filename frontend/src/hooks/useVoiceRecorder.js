@@ -199,7 +199,7 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 

@@ -26,8 +26,8 @@ export default function InterviewPage() {
   const [totalDomains, setTotalDomains] = useState(parseInt(sessionStorage.getItem('total_domains') || '4'));
   const [domainsCovered, setDomainsCovered] = useState(parseInt(sessionStorage.getItem('domains_covered') || '0'));
   const [isPlaying, setIsPlaying] = useState(false);
-  const [statusText, setStatusText] = useState('Interviewer speaking...');
   const [lastTranscript, setLastTranscript] = useState('');
+  const [timeRemaining, setTimeRemaining] = useState(60);
 
   // Check session validity on mount
   useEffect(() => {
@@ -60,9 +60,6 @@ export default function InterviewPage() {
       if (audioUrl && audioRef.current) {
         audioRef.current.src = audioUrl;
         audioRef.current.play().catch((err) => console.warn('Audio play failed:', err));
-      } else {
-        // No audio — just enable recording immediately
-        setStatusText('Your turn');
       }
     },
     onInterviewComplete: (scores) => {
@@ -74,20 +71,38 @@ export default function InterviewPage() {
     },
   });
 
-  // Handle audio playback
+  // Handle first question audio playback on mount
   useEffect(() => {
-    if (initialAudioBase64 && initialAudioBase64.length > 0) {
+    if (initialAudioBase64 && initialAudioBase64.length > 10) {
       const audioBlob = base64ToBlob(initialAudioBase64, 'audio/mpeg');
       const audioUrl = URL.createObjectURL(audioBlob);
       if (audioRef.current) {
         audioRef.current.src = audioUrl;
         audioRef.current.play().catch((err) => console.warn('Audio play failed:', err));
       }
-    } else if (initialQuestionText) {
-      // No audio but question text exists
-      setStatusText('Your turn');
     }
+    // If no audio, candidate's turn starts immediately
   }, []);
+
+  // Timer countdown during recording
+  useEffect(() => {
+    if (isRecording) {
+      setTimeRemaining(60);
+      const interval = setInterval(() => {
+        setTimeRemaining(prev => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            stopRecording();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(interval);
+    } else {
+      setTimeRemaining(60);
+    }
+  }, [isRecording, stopRecording]);
 
   // Proctoring: track tab switches
   useEffect(() => {
@@ -118,35 +133,21 @@ export default function InterviewPage() {
     };
   }, [sessionId, isReady]);
 
-  // Update status based on state
-  useEffect(() => {
-    if (isProcessing) {
-      setStatusText('Processing...');
-    } else if (isRecording) {
-      setStatusText('Recording...');
-    } else if (isPlaying) {
-      setStatusText('Interviewer speaking...');
-    } else {
-      setStatusText('Your turn');
-    }
-  }, [isRecording, isProcessing, isPlaying]);
-
   function handleRecordClick() {
     if (isRecording) {
       stopRecording();
     } else {
+      setLastTranscript(''); // Clear transcript when starting new recording
       startRecording();
     }
   }
 
   function handleAudioEnded() {
     setIsPlaying(false);
-    setStatusText('Your turn');
   }
 
   function handleAudioPlay() {
     setIsPlaying(true);
-    setStatusText('Interviewer speaking...');
   }
 
   // Helper: convert base64 to Blob
@@ -164,6 +165,16 @@ export default function InterviewPage() {
     }
     return new Blob(byteArrays, { type: mimeType });
   }
+
+  // Determine turn state
+  const isCandidateTurn = !isPlaying && !isRecording && !isProcessing;
+
+  // Timer color
+  const getTimerColor = () => {
+    if (timeRemaining > 30) return '#22c55e';
+    if (timeRemaining >= 10) return '#eab308';
+    return '#ef4444';
+  };
 
   // Don't render until session is validated
   if (!isReady) {
@@ -186,10 +197,46 @@ export default function InterviewPage() {
           <h2 style={styles.questionText}>{currentQuestion}</h2>
         </div>
 
-        {/* Status indicator */}
-        <div style={styles.statusIndicator}>
-          {statusText}
-        </div>
+        {/* Turn indicator banner */}
+        {isPlaying && (
+          <div style={styles.turnBannerInterviewer}>
+            <div style={styles.turnBannerIcon}>🎙️</div>
+            <div>
+              <div style={styles.turnBannerTitle}>Interviewer is speaking...</div>
+              <div style={styles.turnBannerSubtitle}>Listen carefully to the question</div>
+            </div>
+          </div>
+        )}
+
+        {isCandidateTurn && !recorderError && (
+          <div style={styles.turnBannerCandidate}>
+            <div style={styles.turnBannerIcon}>⏺</div>
+            <div>
+              <div style={styles.turnBannerTitle}>Your Turn — Click the mic to answer</div>
+              <div style={styles.turnBannerSubtitle}>Take your time, click Stop when done</div>
+            </div>
+          </div>
+        )}
+
+        {isRecording && (
+          <div style={styles.turnBannerRecording}>
+            <div style={styles.turnBannerIcon}>🔴</div>
+            <div>
+              <div style={styles.turnBannerTitle}>Recording... speak your answer</div>
+              <div style={styles.turnBannerSubtitle}>Click Stop when you're done</div>
+            </div>
+          </div>
+        )}
+
+        {isProcessing && (
+          <div style={styles.turnBannerProcessing}>
+            <div style={styles.turnBannerIcon}>⏳</div>
+            <div>
+              <div style={styles.turnBannerTitle}>Processing your answer...</div>
+              <div style={styles.turnBannerSubtitle}>Preparing next question</div>
+            </div>
+          </div>
+        )}
 
         {/* Audio element (hidden, controlled programmatically) */}
         <audio
@@ -200,23 +247,38 @@ export default function InterviewPage() {
           style={{ display: 'none' }}
         />
 
-        {/* Record button */}
-        <button
-          onClick={handleRecordClick}
-          disabled={isProcessing || isPlaying}
-          style={{
-            ...styles.recordBtn,
-            ...(isRecording ? styles.recordBtnActive : {}),
-            opacity: isProcessing || isPlaying ? 0.5 : 1,
-          }}
-        >
-          {isRecording ? '■' : '●'}
-        </button>
+        {/* Record button and timer area */}
+        <div style={styles.recordArea}>
+          <button
+            onClick={handleRecordClick}
+            disabled={!isCandidateTurn && !isRecording}
+            style={{
+              ...styles.recordBtn,
+              ...(isRecording ? styles.recordBtnActive : {}),
+              ...(!isCandidateTurn && !isRecording ? styles.recordBtnDisabled : {}),
+            }}
+          >
+            {isRecording ? '■' : '🎙️'}
+          </button>
 
-        {/* Transcript display */}
-        {lastTranscript && (
-          <div style={styles.transcriptBox}>
-            <span style={styles.transcriptLabel}>You said:</span> {lastTranscript}
+          {/* Timer */}
+          {isRecording && (
+            <div style={{ ...styles.timer, color: getTimerColor() }}>
+              {timeRemaining}s
+            </div>
+          )}
+
+          {/* Button label */}
+          <div style={styles.buttonLabel}>
+            {isRecording ? 'Click to Stop' : isCandidateTurn ? 'Click to Answer' : 'Please Wait'}
+          </div>
+        </div>
+
+        {/* Transcript card */}
+        {lastTranscript && !isRecording && (
+          <div style={styles.transcriptCard}>
+            <div style={styles.transcriptLabel}>Your answer:</div>
+            <div style={styles.transcriptText}>"{lastTranscript}"</div>
           </div>
         )}
 
@@ -275,7 +337,7 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     padding: '40px 20px',
     gap: '24px',
   },
@@ -294,41 +356,129 @@ const styles = {
     margin: 0,
     textAlign: 'center',
   },
-  statusIndicator: {
-    fontSize: '16px',
+  turnBannerInterviewer: {
+    maxWidth: '700px',
+    width: '100%',
+    padding: '20px 24px',
+    backgroundColor: '#4c1d95',
+    borderRadius: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
+    color: '#fff',
+  },
+  turnBannerCandidate: {
+    maxWidth: '700px',
+    width: '100%',
+    padding: '20px 24px',
+    backgroundColor: '#14532d',
+    borderRadius: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
+    color: '#fff',
+  },
+  turnBannerRecording: {
+    maxWidth: '700px',
+    width: '100%',
+    padding: '20px 24px',
+    backgroundColor: '#7f1d1d',
+    borderRadius: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
+    color: '#fff',
+    animation: 'pulse-red 2s ease-in-out infinite',
+  },
+  turnBannerProcessing: {
+    maxWidth: '700px',
+    width: '100%',
+    padding: '20px 24px',
+    backgroundColor: '#1c1917',
+    borderRadius: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
     color: '#9ca3af',
-    fontStyle: 'italic',
+  },
+  turnBannerIcon: {
+    fontSize: '28px',
+    flexShrink: 0,
+  },
+  turnBannerTitle: {
+    fontSize: '16px',
+    fontWeight: '600',
+  },
+  turnBannerSubtitle: {
+    fontSize: '13px',
+    opacity: 0.8,
+    marginTop: '4px',
+  },
+  recordArea: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '16px',
   },
   recordBtn: {
-    width: '80px',
-    height: '80px',
+    width: '100px',
+    height: '100px',
     borderRadius: '50%',
-    border: '3px solid #c084fc',
+    border: '3px solid #22c55e',
     backgroundColor: 'transparent',
-    color: '#c084fc',
-    fontSize: '32px',
+    color: '#22c55e',
+    fontSize: '36px',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     transition: 'all 0.2s',
+    animation: 'pulse-green 2s ease-in-out infinite',
   },
   recordBtnActive: {
-    backgroundColor: '#c084fc',
+    backgroundColor: '#ef4444',
+    borderColor: '#ef4444',
     color: '#fff',
     transform: 'scale(1.1)',
+    animation: 'pulse-red 1.5s ease-in-out infinite',
   },
-  transcriptBox: {
-    maxWidth: '600px',
-    textAlign: 'center',
-    fontSize: '13px',
+  recordBtnDisabled: {
+    backgroundColor: '#2a2a2a',
+    borderColor: '#3a3a3a',
     color: '#6b7280',
-    fontStyle: 'italic',
-    lineHeight: '1.5',
+    cursor: 'not-allowed',
+    animation: 'none',
+  },
+  timer: {
+    fontSize: '32px',
+    fontWeight: '700',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  buttonLabel: {
+    fontSize: '14px',
+    color: '#9ca3af',
+    fontWeight: '500',
+  },
+  transcriptCard: {
+    maxWidth: '600px',
+    width: '100%',
+    padding: '16px 20px',
+    backgroundColor: '#1a1a1a',
+    borderRadius: '8px',
+    border: '1px solid #2a2a2a',
   },
   transcriptLabel: {
+    fontSize: '12px',
     fontWeight: '600',
     color: '#9ca3af',
+    textTransform: 'uppercase',
+    marginBottom: '8px',
+  },
+  transcriptText: {
+    fontSize: '14px',
+    color: '#d1d5db',
+    fontStyle: 'italic',
+    lineHeight: '1.5',
   },
   error: {
     backgroundColor: '#7f1d1d',
@@ -358,3 +508,23 @@ const styles = {
     color: '#9ca3af',
   },
 };
+
+// Add keyframe animations
+if (typeof document !== 'undefined') {
+  const existingStyle = document.getElementById('interview-animations');
+  if (!existingStyle) {
+    const style = document.createElement('style');
+    style.id = 'interview-animations';
+    style.textContent = `
+      @keyframes pulse-green {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+        50% { box-shadow: 0 0 0 12px rgba(34, 197, 94, 0); }
+      }
+      @keyframes pulse-red {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+        50% { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+}
