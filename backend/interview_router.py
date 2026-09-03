@@ -3,9 +3,13 @@
 import base64
 import logging
 import os
+import tempfile
 import uuid
 from typing import Annotated, Optional
 
+import dashscope
+from dashscope.audio.asr import Recognition
+from dashscope.audio.tts_v2 import SpeechSynthesizer
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
@@ -27,6 +31,9 @@ logger = logging.getLogger("taleembot.interview")
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+STT_MODEL = os.getenv("STT_MODEL", "qwen3-asr-flash-2025-09-08")
+TTS_MODEL = os.getenv("TTS_MODEL", "cosyvoice-v3-flash")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
@@ -45,79 +52,150 @@ class StartInterviewResponse(BaseModel):
 
 
 async def transcribe_audio(audio_bytes: bytes, filename: str) -> str:
-    """Send audio to OpenAI Whisper API and return transcript text."""
-    if not OPENAI_API_KEY:
+    """Send audio to DashScope ASR API and return transcript text."""
+    if not DASHSCOPE_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="OpenAI API key is not configured",
+            detail="DashScope API key is not configured",
         )
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        files = {
-            "file": (filename, audio_bytes, "audio/webm"),
-        }
-        data = {
-            "model": "whisper-1",
-            "language": "en",
-            "response_format": "text",
-        }
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-        }
-        response = await client.post(
-            "https://api.openai.com/v1/audio/transcriptions",
-            files=files,
-            data=data,
-            headers=headers,
-        )
+    dashscope.api_key = DASHSCOPE_API_KEY
 
-    if response.status_code != 200:
-        logger.error("Whisper API error: %s — %s", response.status_code, response.text[:300])
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Whisper transcription failed: {response.status_code}",
-        )
+    # Write audio bytes to a temp file — DashScope ASR requires a file path
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
 
-    return response.text.strip()
+    try:
+        response = Recognition(
+            model=STT_MODEL,
+            format="webm",
+            sample_rate=16000,
+            language_hints=["en"],
+        ).call(tmp_path)
+
+        if response.status_code == 200:
+            sentences = response.output.get("sentence", [])
+            transcript = " ".join(s.get("text", "") for s in sentences).strip()
+            return transcript or ""
+        else:
+            logger.error("DashScope ASR error: %s — %s", response.code, response.message)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"ASR failed: {response.code} — {response.message}",
+            )
+    finally:
+        os.unlink(tmp_path)
+
+
+# --- OLD WHISPER CODE (commented out for quick revert) ---
+# async def transcribe_audio(audio_bytes: bytes, filename: str) -> str:
+#     """Send audio to OpenAI Whisper API and return transcript text."""
+#     if not OPENAI_API_KEY:
+#         raise HTTPException(
+#             status_code=status.HTTP_502_BAD_GATEWAY,
+#             detail="OpenAI API key is not configured",
+#         )
+#
+#     async with httpx.AsyncClient(timeout=30.0) as client:
+#         files = {
+#             "file": (filename, audio_bytes, "audio/webm"),
+#         }
+#         data = {
+#             "model": "whisper-1",
+#             "language": "en",
+#             "response_format": "text",
+#         }
+#         headers = {
+#             "Authorization": f"Bearer {OPENAI_API_KEY}",
+#         }
+#         response = await client.post(
+#             "https://api.openai.com/v1/audio/transcriptions",
+#             files=files,
+#             data=data,
+#             headers=headers,
+#         )
+#
+#     if response.status_code != 200:
+#         logger.error("Whisper API error: %s — %s", response.status_code, response.text[:300])
+#         raise HTTPException(
+#             status_code=status.HTTP_502_BAD_GATEWAY,
+#             detail=f"Whisper transcription failed: {response.status_code}",
+#         )
+#
+#     return response.text.strip()
 
 
 async def text_to_speech(text: str) -> bytes:
-    """Convert text to speech via ElevenLabs. Returns MP3 bytes."""
-    if not ELEVENLABS_API_KEY or ELEVENLABS_API_KEY.startswith("your_"):
-        logger.warning("ElevenLabs API key not configured; returning empty audio for dev mode")
+    """Convert text to speech via DashScope TTS. Returns audio bytes."""
+    if not text:
         return b""
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            url,
-            json={
-                "text": text,
-                "model_id": "eleven_monolingual_v1",
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75,
-                },
-            },
-            headers={
-                "xi-api-key": ELEVENLABS_API_KEY,
-                "Content-Type": "application/json",
-            },
-        )
-
-    if response.status_code == 401:
-        # Invalid/expired key — silently fall back to dev mode instead of crashing
-        logger.warning("ElevenLabs returned 401 (invalid key); returning empty audio for dev mode")
+    if not DASHSCOPE_API_KEY or DASHSCOPE_API_KEY.startswith("your_"):
+        logger.warning("DashScope API key not configured; returning empty audio for dev mode")
         return b""
 
-    if response.status_code != 200:
-        logger.error("ElevenLabs API error: %s — %s", response.status_code, response.text[:300])
+    dashscope.api_key = DASHSCOPE_API_KEY
+
+    try:
+        synthesizer = SpeechSynthesizer(model=TTS_MODEL, voice="longxiaochun")
+        audio = synthesizer.call(text)
+
+        if audio is None:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="TTS returned no audio")
+
+        return bytes(audio)
+    except Exception as exc:
+        err_str = str(exc).lower()
+        # Invalid/expired key or connection refused — silently fall back to dev mode
+        if any(kw in err_str for kw in ["invalid", "401", "unauthorized", "connection is already closed"]):
+            logger.warning("DashScope TTS auth/connection error; returning empty audio for dev mode")
+            return b""
+        logger.error("DashScope TTS error: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"ElevenLabs TTS failed: {response.status_code}",
-        )
+            detail=f"TTS failed: {exc}",
+        ) from exc
 
-    return response.content
+
+# --- OLD ELEVENLABS CODE (commented out for quick revert) ---
+# async def text_to_speech(text: str) -> bytes:
+#     """Convert text to speech via ElevenLabs. Returns MP3 bytes."""
+#     if not ELEVENLABS_API_KEY or ELEVENLABS_API_KEY.startswith("your_"):
+#         logger.warning("ElevenLabs API key not configured; returning empty audio for dev mode")
+#         return b""
+#
+#     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+#     async with httpx.AsyncClient(timeout=30.0) as client:
+#         response = await client.post(
+#             url,
+#             json={
+#                 "text": text,
+#                 "model_id": "eleven_monolingual_v1",
+#                 "voice_settings": {
+#                     "stability": 0.5,
+#                     "similarity_boost": 0.75,
+#                 },
+#             },
+#             headers={
+#                 "xi-api-key": ELEVENLABS_API_KEY,
+#                 "Content-Type": "application/json",
+#             },
+#         )
+#
+#     if response.status_code == 401:
+#         # Invalid/expired key — silently fall back to dev mode instead of crashing
+#         logger.warning("ElevenLabs returned 401 (invalid key); returning empty audio for dev mode")
+#         return b""
+#
+#     if response.status_code != 200:
+#         logger.error("ElevenLabs API error: %s — %s", response.status_code, response.text[:300])
+#         raise HTTPException(
+#             status_code=status.HTTP_502_BAD_GATEWAY,
+#             detail=f"ElevenLabs TTS failed: {response.status_code}",
+#         )
+#
+#     return response.content
 
 
 @router.post("/start", response_model=StartInterviewResponse)
