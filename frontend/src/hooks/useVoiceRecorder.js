@@ -30,6 +30,7 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
       const response = await submitAnswerText(sessionId, trimmed);
       const doneHeader = response.headers['x-interview-done'];
       const questionText = response.headers['x-question-text'] || '';
+      const domainText = response.headers['x-current-domain'] || '';
 
       // Check if interview is complete
       if (doneHeader === 'true') {
@@ -46,7 +47,7 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
         // Audio response — create blob URL and notify parent
         const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
         const audioUrl = URL.createObjectURL(audioBlob);
-        onQuestionReceived(audioUrl, questionText);
+        onQuestionReceived(audioUrl, questionText, domainText);
       }
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'Failed to submit answer');
@@ -117,15 +118,16 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
     };
 
     recognition.onerror = (event) => {
-      // Clear the max time timer
+      if (event.error === 'no-speech') {
+        // Transient — onend will restart recognition. Keep the max-time timer
+        // running so the cumulative 2-minute cap is preserved across restarts.
+        return;
+      }
+
+      // Fatal — clear the max time timer and stop for good
       if (maxTimeTimerRef.current) {
         clearTimeout(maxTimeTimerRef.current);
         maxTimeTimerRef.current = null;
-      }
-
-      if (event.error === 'no-speech') {
-        // Ignore no-speech errors during continuous recording
-        return;
       }
 
       isRecordingRef.current = false;

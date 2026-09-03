@@ -22,7 +22,7 @@ export default function InterviewPage() {
 
   // State
   const [currentQuestion, setCurrentQuestion] = useState(initialQuestionText);
-  const [currentDomain, setCurrentDomain] = useState(sessionStorage.getItem('current_domain') || 'General');
+  const [currentDomain, setCurrentDomain] = useState(sessionStorage.getItem('current_domain') || 'Introduction');
   const [questionNumber, setQuestionNumber] = useState(parseInt(sessionStorage.getItem('question_number') || '1'));
   const [isPlaying, setIsPlaying] = useState(false);
   const [canReplay, setCanReplay] = useState(false);
