@@ -40,20 +40,18 @@ load_dotenv()
 
 logger = logging.getLogger("taleembot.interview_graph")
 
-MAX_QUESTIONS = 10
+MAX_QUESTIONS = 5
 DEFAULT_DOMAINS = [
     "Technical Expertise",
     "Problem Solving",
-    "System Design & Architecture",
-    "Communication & Collaboration",
 ]
 
 _EXTRACTOR_SYSTEM = (
     "You are the domain-extraction stage of TaleemBot, an AI interview engine. "
-    "Read the job description and the candidate's CV, then identify the 3-4 core "
+    "Read the job description and the candidate's CV, then identify exactly 2 core "
     "skill domains the company actually cares about for this role. Return ONLY a "
-    "JSON array of 3-4 short domain names (2-5 words each), e.g. "
-    '["Backend APIs", "Relational Databases", "React Frontend", "DevOps & CI/CD"]. '
+    "JSON array of 2 short domain names (2-5 words each), e.g. "
+    '["Backend APIs", "React Frontend"]. "
     "No prose, no markdown."
 )
 
@@ -185,10 +183,13 @@ def question_generator(state: InterviewState) -> dict:
     domains = state["domains"]
     index = min(state.get("current_domain_index", 0), len(domains) - 1)
     domain = domains[index]
-    opened = domain in state.get("domains_covered", [])
     name = state.get("candidate_name") or "Candidate"
 
-    if not opened:
+    # Determine if this is an opener or follow-up based on qa_pairs count for this domain
+    domain_qa_count = sum(1 for p in state.get("qa_pairs", []) if p["domain"] == domain)
+    
+    if domain_qa_count == 0:
+        # Opener question for this domain
         human = (
             f"This opens the '{domain}' domain of the interview with {name}.\n"
             f"JOB DESCRIPTION (excerpt):\n{_clip(state.get('jd_text', ''), 3000)}\n\n"
@@ -198,11 +199,12 @@ def question_generator(state: InterviewState) -> dict:
             f"can demonstrate real depth."
         )
     else:
-        history = [p for p in state.get("qa_pairs", []) if p["domain"] == domain][-6:]
+        # Follow-up question based on last answer in this domain
+        history = [p for p in state.get("qa_pairs", []) if p["domain"] == domain][-1:]
         transcript = "\n".join(f"Q: {p['question']}\nA: {p['answer']}" for p in history)
         human = (
             f"You are in the '{domain}' domain with {name}.\n"
-            f"Conversation so far in this domain:\n{transcript}\n\n"
+            f"Last exchange:\n{transcript}\n\n"
             f"Ask ONE targeted follow-up to the candidate's last answer: probe for "
             f"concrete detail, challenge vague claims, or explore trade-offs. Do not "
             f"repeat an earlier question and do not switch topics."
@@ -210,7 +212,7 @@ def question_generator(state: InterviewState) -> dict:
 
     question = _ask_llm(_QUESTION_SYSTEM, human).strip().strip('"').strip()
     updates: dict = {"current_question": question}
-    if not opened:
+    if domain_qa_count == 0:
         updates["domains_covered"] = [domain]
     return updates
 
@@ -235,13 +237,20 @@ def coverage_tracker(state: InterviewState) -> dict:
     """Pure logic routing brain: no LLM call."""
     total_questions = len(state.get("qa_pairs", []))
     
-    # Check if we've reached max questions
+    # Check if we've reached 5 questions total (1 intro + 2 domains × 2 questions each)
     if total_questions >= MAX_QUESTIONS:
         return {"interview_complete": True}
     
-    # Cycle through domains evenly using modulo
+    # Cycle through domains: after intro (question 0), alternate between domain 0 and domain 1
+    # Question 1 → domain 0 opener, Question 2 → domain 0 follow-up
+    # Question 3 → domain 1 opener, Question 4 → domain 1 follow-up
     domains = state["domains"]
-    next_index = total_questions % len(domains)
+    if not domains:
+        return {}
+    
+    # Calculate which domain we should be in based on question number
+    # After intro question, questions 1-2 are domain 0, questions 3-4 are domain 1
+    next_index = (total_questions - 1) // 2 % len(domains)
     
     return {"current_domain_index": next_index}
 

@@ -9,7 +9,6 @@ export default function InterviewPage() {
   const audioRef = useRef(null);
   const interviewStartRef = useRef(Date.now());
   const proctorTimerRef = useRef(null);
-  const domainsSeenRef = useRef(new Set());
 
   // Read session data
   const sessionId = sessionStorage.getItem('session_id');
@@ -23,8 +22,6 @@ export default function InterviewPage() {
   const [currentQuestion, setCurrentQuestion] = useState(initialQuestionText);
   const [currentDomain, setCurrentDomain] = useState(sessionStorage.getItem('current_domain') || 'General');
   const [questionNumber, setQuestionNumber] = useState(parseInt(sessionStorage.getItem('question_number') || '1'));
-  const [totalDomains, setTotalDomains] = useState(parseInt(sessionStorage.getItem('total_domains') || '4'));
-  const [domainsCovered, setDomainsCovered] = useState(parseInt(sessionStorage.getItem('domains_covered') || '0'));
   const [isPlaying, setIsPlaying] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(120);
 
@@ -49,10 +46,6 @@ export default function InterviewPage() {
       if (domain) {
         setCurrentDomain(domain);
         sessionStorage.setItem('current_domain', domain);
-        
-        // Track unique domains seen
-        domainsSeenRef.current.add(domain);
-        setDomainsCovered(domainsSeenRef.current.size);
       }
 
       // Play the audio
@@ -188,11 +181,22 @@ export default function InterviewPage() {
       <div style={styles.topBar}>
         <Logo size={40} />
         <div style={styles.badge}>{currentDomain}</div>
-        <div style={styles.counter}>Q {questionNumber}/{totalDomains * 4}</div>
+        <div style={styles.counter}>Q {questionNumber} / 5</div>
       </div>
 
       {/* Main area */}
       <div style={styles.main}>
+        {/* AI Interviewer Avatar */}
+        {isPlaying && (
+          <div style={styles.avatarContainer}>
+            <div style={styles.avatarGlow}>
+              <div style={styles.avatarCircle}>
+                <span style={styles.avatarEmoji}>🤖</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Turn indicator banner */}
         {isPlaying && (
           <div style={styles.turnBannerInterviewer}>
@@ -286,7 +290,14 @@ export default function InterviewPage() {
 
         {/* Recorder error */}
         {recorderError && (
-          <div style={styles.error}>{recorderError}</div>
+          <div style={styles.errorContainer}>
+            <div style={styles.error}>{recorderError}</div>
+            {!isProcessing && (
+              <button onClick={() => { startRecording(); }} style={styles.retryBtn}>
+                Try Again
+              </button>
+            )}
+          </div>
         )}
 
         {/* Progress bar */}
@@ -294,12 +305,12 @@ export default function InterviewPage() {
           <div
             style={{
               ...styles.progressBarFill,
-              width: `${(domainsCovered / totalDomains) * 100}%`,
+              width: `${((questionNumber - 1) / 5) * 100}%`,
             }}
           />
         </div>
         <div style={styles.progressText}>
-          Domains covered: {domainsCovered}/{totalDomains}
+          Questions answered: {questionNumber - 1}/5
         </div>
       </div>
     </div>
@@ -309,8 +320,8 @@ export default function InterviewPage() {
 const styles = {
   container: {
     minHeight: '100vh',
-    backgroundColor: '#0f0f0f',
-    color: '#f0f0f0',
+    background: 'linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 100%)',
+    color: '#f1f5f9',
     fontFamily: 'system-ui, -apple-system, sans-serif',
     display: 'flex',
     flexDirection: 'column',
@@ -320,10 +331,10 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '16px 32px',
-    borderBottom: '1px solid #2a2a2a',
+    borderBottom: '1px solid #1e1e35',
   },
   badge: {
-    backgroundColor: '#c084fc',
+    backgroundColor: '#8b5cf6',
     color: '#fff',
     padding: '6px 16px',
     borderRadius: '16px',
@@ -332,7 +343,7 @@ const styles = {
   },
   counter: {
     fontSize: '14px',
-    color: '#9ca3af',
+    color: '#64748b',
   },
   main: {
     flex: 1,
@@ -343,10 +354,30 @@ const styles = {
     padding: '32px 20px',
     gap: '20px',
   },
+  avatarContainer: {
+    marginTop: '16px',
+  },
+  avatarGlow: {
+    animation: 'pulse-avatar 2s ease-in-out infinite',
+  },
+  avatarCircle: {
+    width: '120px',
+    height: '120px',
+    borderRadius: '50%',
+    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 4px 24px rgba(99, 102, 241, 0.08)',
+  },
+  avatarEmoji: {
+    fontSize: '48px',
+  },
   turnBannerInterviewer: {
     width: '100%',
+    maxWidth: '700px',
     padding: '12px 32px',
-    backgroundColor: '#4c1d95',
+    backgroundColor: '#1e1b4b',
     borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
@@ -355,8 +386,9 @@ const styles = {
   },
   turnBannerCandidate: {
     width: '100%',
+    maxWidth: '700px',
     padding: '12px 32px',
-    backgroundColor: '#14532d',
+    backgroundColor: '#052e16',
     borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
@@ -365,8 +397,9 @@ const styles = {
   },
   turnBannerRecording: {
     width: '100%',
+    maxWidth: '700px',
     padding: '12px 32px',
-    backgroundColor: '#7f1d1d',
+    backgroundColor: '#450a0a',
     borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
@@ -376,13 +409,14 @@ const styles = {
   },
   turnBannerProcessing: {
     width: '100%',
+    maxWidth: '700px',
     padding: '12px 32px',
-    backgroundColor: '#1c1917',
+    backgroundColor: '#0f0f1a',
     borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     gap: '16px',
-    color: '#9ca3af',
+    color: '#64748b',
   },
   turnBannerIcon: {
     fontSize: '24px',
@@ -401,14 +435,15 @@ const styles = {
     maxWidth: '700px',
     width: '100%',
     padding: '28px 32px',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#13131f',
     borderRadius: '12px',
-    border: '1px solid #2a2a2a',
+    border: '1px solid #1e1e35',
+    boxShadow: '0 4px 24px rgba(99, 102, 241, 0.08)',
   },
   questionLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#c084fc',
+    color: '#6366f1',
     textTransform: 'uppercase',
     marginBottom: '12px',
     letterSpacing: '0.5px',
@@ -419,7 +454,7 @@ const styles = {
     lineHeight: '1.6',
     margin: 0,
     textAlign: 'center',
-    color: '#f0f0f0',
+    color: '#f1f5f9',
   },
   recordArea: {
     display: 'flex',
@@ -431,16 +466,17 @@ const styles = {
     width: '100px',
     height: '100px',
     borderRadius: '50%',
-    border: '3px solid #22c55e',
+    border: '3px solid #6366f1',
     backgroundColor: 'transparent',
-    color: '#22c55e',
+    color: '#6366f1',
     fontSize: '36px',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     transition: 'all 0.2s',
-    animation: 'pulse-green 2s ease-in-out infinite',
+    boxShadow: '0 0 0 0 rgba(99, 102, 241, 0.4)',
+    animation: 'pulse-indigo 2s ease-in-out infinite',
   },
   recordBtnActive: {
     backgroundColor: '#ef4444',
@@ -450,9 +486,9 @@ const styles = {
     animation: 'pulse-red 1.5s ease-in-out infinite',
   },
   recordBtnDisabled: {
-    backgroundColor: '#2a2a2a',
-    borderColor: '#3a3a3a',
-    color: '#6b7280',
+    backgroundColor: '#1e1e35',
+    borderColor: '#2a2a45',
+    color: '#64748b',
     cursor: 'not-allowed',
     animation: 'none',
   },
@@ -463,18 +499,18 @@ const styles = {
   },
   buttonLabel: {
     fontSize: '14px',
-    color: '#9ca3af',
+    color: '#64748b',
     fontWeight: '500',
   },
   liveTranscript: {
     maxWidth: '600px',
     width: '100%',
     padding: '12px 16px',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#13131f',
     borderRadius: '8px',
-    border: '1px solid #2a2a2a',
+    border: '1px solid #1e1e35',
     fontSize: '13px',
-    color: '#9ca3af',
+    color: '#64748b',
     fontStyle: 'italic',
     lineHeight: '1.5',
     maxHeight: '3em',
@@ -483,10 +519,10 @@ const styles = {
   },
   liveTranscriptLabel: {
     fontWeight: '600',
-    color: '#6b7280',
+    color: '#475569',
   },
   error: {
-    backgroundColor: '#7f1d1d',
+    backgroundColor: '#450a0a',
     color: '#fecaca',
     padding: '12px',
     borderRadius: '6px',
@@ -494,23 +530,40 @@ const styles = {
     maxWidth: '500px',
     textAlign: 'center',
   },
+  errorContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '12px',
+  },
+  retryBtn: {
+    padding: '8px 20px',
+    borderRadius: '6px',
+    border: '1px solid #6366f1',
+    backgroundColor: 'transparent',
+    color: '#6366f1',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '500',
+  },
   progressBarContainer: {
     width: '100%',
     maxWidth: '500px',
     height: '8px',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#1e1e35',
     borderRadius: '4px',
     overflow: 'hidden',
     marginTop: '16px',
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#c084fc',
+    backgroundColor: '#6366f1',
     transition: 'width 0.3s ease',
   },
   progressText: {
     fontSize: '14px',
-    color: '#9ca3af',
+    color: '#64748b',
+    marginTop: '8px',
   },
 };
 
@@ -521,13 +574,17 @@ if (typeof document !== 'undefined') {
     const style = document.createElement('style');
     style.id = 'interview-animations';
     style.textContent = `
-      @keyframes pulse-green {
-        0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
-        50% { box-shadow: 0 0 0 12px rgba(34, 197, 94, 0); }
+      @keyframes pulse-indigo {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+        50% { box-shadow: 0 0 0 12px rgba(99, 102, 241, 0); }
       }
       @keyframes pulse-red {
         0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
         50% { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
+      }
+      @keyframes pulse-avatar {
+        0%, 100% { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.2); }
+        50% { box-shadow: 0 0 0 16px rgba(99, 102, 241, 0); }
       }
     `;
     document.head.appendChild(style);

@@ -10,6 +10,7 @@ export default function UploadPage() {
   const [candidateName, setCandidateName] = useState('');
   const [cvText, setCvText] = useState('');
   const [jdText, setJdText] = useState('');
+  const [jdRawText, setJdRawText] = useState('');
   const [cvCharCount, setCvCharCount] = useState(0);
   const [jdCharCount, setJdCharCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -100,6 +101,9 @@ export default function UploadPage() {
   }
 
   async function handleStartInterview() {
+    // Clear sessionStorage to prevent bleed between sessions
+    sessionStorage.clear();
+
     if (!candidateName || !cvText || !jdText) {
       setError('Please complete all three steps before starting the interview.');
       return;
@@ -123,6 +127,7 @@ export default function UploadPage() {
   }
 
   function handleLogout() {
+    if (!window.confirm('Are you sure you want to logout?')) return;
     localStorage.removeItem('access_token');
     navigate('/login');
   }
@@ -185,6 +190,9 @@ export default function UploadPage() {
             }}
             style={styles.fileInput}
           />
+          {loading && cvCharCount === 0 && (
+            <div style={styles.inlineLoading}>Parsing CV...</div>
+          )}
           {cvCharCount > 0 && (
             <div style={styles.success}>
               CV parsed successfully ({cvCharCount} characters extracted)
@@ -226,25 +234,36 @@ export default function UploadPage() {
               <textarea
                 placeholder="Paste the job description here..."
                 rows={8}
+                value={jdRawText}
+                onChange={(e) => setJdRawText(e.target.value)}
                 style={styles.textarea}
-                onBlur={(e) => {
-                  const text = e.target.value.trim();
-                  if (text && text !== jdText) {
-                    handleJDTextSubmit(text);
-                  }
-                }}
               />
+              <button
+                onClick={() => handleJDTextSubmit(jdRawText)}
+                disabled={loading || !jdRawText.trim()}
+                style={{
+                  ...styles.confirmJdBtn,
+                  opacity: loading || !jdRawText.trim() ? 0.5 : 1,
+                }}
+              >
+                {loading ? 'Parsing...' : 'Confirm Job Description'}
+              </button>
             </div>
           ) : (
-            <input
-              type="file"
-              accept=".pdf"
-              onChange={(e) => {
-                const file = e.target.files[0];
-                if (file) handleJDUpload(file);
-              }}
-              style={styles.fileInput}
-            />
+            <div>
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={(e) => {
+                  const file = e.target.files[0];
+                  if (file) handleJDUpload(file);
+                }}
+                style={styles.fileInput}
+              />
+              {loading && jdCharCount === 0 && jdMode === 'file' && (
+                <div style={styles.inlineLoading}>Parsing JD...</div>
+              )}
+            </div>
           )}
 
           {jdCharCount > 0 && (
@@ -263,7 +282,7 @@ export default function UploadPage() {
             opacity: loading || !candidateName || !cvText || !jdText ? 0.5 : 1,
           }}
         >
-          {loading ? 'Starting...' : 'Start Interview'}
+          {loading && candidateName && cvText && jdText ? 'Starting...' : 'Start Interview'}
         </button>
       </div>
     </div>
@@ -273,8 +292,8 @@ export default function UploadPage() {
 const styles = {
   container: {
     minHeight: '100vh',
-    backgroundColor: '#0f0f0f',
-    color: '#f0f0f0',
+    background: 'linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 100%)',
+    color: '#f1f5f9',
     fontFamily: 'system-ui, -apple-system, sans-serif',
   },
   topBar: {
@@ -282,16 +301,16 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '16px 32px',
-    borderBottom: '1px solid #2a2a2a',
+    borderBottom: '1px solid #1e1e35',
   },
   logoutBtn: {
-    padding: '8px 16px',
-    borderRadius: '6px',
-    border: '1px solid #3a3a3a',
+    padding: '4px 8px',
+    borderRadius: '4px',
+    border: 'none',
     backgroundColor: 'transparent',
-    color: '#f0f0f0',
+    color: '#64748b',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '13px',
   },
   content: {
     maxWidth: '600px',
@@ -305,7 +324,7 @@ const styles = {
     margin: '0 0 32px 0',
   },
   error: {
-    backgroundColor: '#7f1d1d',
+    backgroundColor: '#450a0a',
     color: '#fecaca',
     padding: '12px',
     borderRadius: '6px',
@@ -313,7 +332,7 @@ const styles = {
     fontSize: '14px',
   },
   success: {
-    backgroundColor: '#14532d',
+    backgroundColor: '#052e16',
     color: '#bbf7d0',
     padding: '12px',
     borderRadius: '6px',
@@ -323,9 +342,10 @@ const styles = {
   step: {
     marginBottom: '32px',
     padding: '24px',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#13131f',
     borderRadius: '12px',
-    border: '1px solid #2a2a2a',
+    border: '1px solid #1e1e35',
+    boxShadow: '0 4px 24px rgba(99, 102, 241, 0.08)',
   },
   stepHeader: {
     display: 'flex',
@@ -334,7 +354,7 @@ const styles = {
     marginBottom: '16px',
   },
   stepNumber: {
-    backgroundColor: '#c084fc',
+    backgroundColor: '#6366f1',
     color: '#fff',
     padding: '4px 12px',
     borderRadius: '12px',
@@ -350,9 +370,9 @@ const styles = {
     width: '100%',
     padding: '12px',
     borderRadius: '6px',
-    border: '1px solid #3a3a3a',
-    backgroundColor: '#2a2a2a',
-    color: '#f0f0f0',
+    border: '1px solid #1e1e35',
+    backgroundColor: '#1e1e35',
+    color: '#f1f5f9',
     fontSize: '14px',
     outline: 'none',
     boxSizing: 'border-box',
@@ -361,9 +381,9 @@ const styles = {
     width: '100%',
     padding: '12px',
     borderRadius: '6px',
-    border: '1px solid #3a3a3a',
-    backgroundColor: '#2a2a2a',
-    color: '#f0f0f0',
+    border: '1px solid #1e1e35',
+    backgroundColor: '#1e1e35',
+    color: '#f1f5f9',
     fontSize: '14px',
     outline: 'none',
     resize: 'vertical',
@@ -373,9 +393,9 @@ const styles = {
     width: '100%',
     padding: '12px',
     borderRadius: '6px',
-    border: '1px solid #3a3a3a',
-    backgroundColor: '#2a2a2a',
-    color: '#f0f0f0',
+    border: '1px solid #1e1e35',
+    backgroundColor: '#1e1e35',
+    color: '#f1f5f9',
     fontSize: '14px',
     boxSizing: 'border-box',
   },
@@ -388,24 +408,43 @@ const styles = {
     flex: 1,
     padding: '10px',
     borderRadius: '6px',
-    border: '1px solid #3a3a3a',
-    backgroundColor: '#2a2a2a',
-    color: '#9ca3af',
+    border: '1px solid #1e1e35',
+    backgroundColor: '#1e1e35',
+    color: '#64748b',
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '500',
   },
   modeBtnActive: {
-    backgroundColor: '#c084fc',
+    backgroundColor: '#6366f1',
     color: '#fff',
-    border: '1px solid #c084fc',
+    border: '1px solid #6366f1',
+  },
+  confirmJdBtn: {
+    width: '100%',
+    padding: '10px',
+    borderRadius: '6px',
+    border: '1px solid #6366f1',
+    backgroundColor: 'transparent',
+    color: '#6366f1',
+    fontSize: '14px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    marginTop: '12px',
+    transition: 'all 0.2s',
+  },
+  inlineLoading: {
+    fontSize: '13px',
+    color: '#8b5cf6',
+    marginTop: '8px',
+    fontStyle: 'italic',
   },
   startBtn: {
     width: '100%',
     padding: '16px',
     borderRadius: '8px',
     border: 'none',
-    backgroundColor: '#c084fc',
+    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
     color: '#fff',
     fontSize: '16px',
     fontWeight: '600',
@@ -414,8 +453,8 @@ const styles = {
   },
   loadingContainer: {
     minHeight: '100vh',
-    backgroundColor: '#0f0f0f',
-    color: '#f0f0f0',
+    background: 'linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 100%)',
+    color: '#f1f5f9',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -426,20 +465,20 @@ const styles = {
   spinner: {
     width: '48px',
     height: '48px',
-    border: '4px solid #2a2a2a',
-    borderTop: '4px solid #c084fc',
+    border: '4px solid #1e1e35',
+    borderTop: '4px solid #6366f1',
     borderRadius: '50%',
     animation: 'spin 1s linear infinite',
   },
   loadingMessage: {
     fontSize: '20px',
     fontWeight: '500',
-    color: '#f0f0f0',
+    color: '#f1f5f9',
     margin: 0,
   },
   loadingNote: {
     fontSize: '14px',
-    color: '#9ca3af',
+    color: '#64748b',
     margin: 0,
   },
 };

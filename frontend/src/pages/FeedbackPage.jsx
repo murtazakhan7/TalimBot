@@ -1,36 +1,33 @@
-import { useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Logo from '../components/Logo';
 
 export default function FeedbackPage() {
   const navigate = useNavigate();
+  const [scores, setScores] = useState(null);
+  const [copyStatus, setCopyStatus] = useState('');
 
-  // Read scores from sessionStorage
-  const scoresRaw = sessionStorage.getItem('interview_scores');
-  
-  if (!scoresRaw) {
-    navigate('/upload');
-    return null;
-  }
+  useEffect(() => {
+    const raw = sessionStorage.getItem('interview_scores');
+    if (!raw) { navigate('/upload'); return; }
+    try {
+      setScores(JSON.parse(raw));
+    } catch {
+      navigate('/upload');
+    }
+  }, [navigate]);
 
-  let scores;
-  try {
-    scores = JSON.parse(scoresRaw);
-  } catch (err) {
-    console.error('Failed to parse interview scores:', err);
-    navigate('/upload');
-    return null;
-  }
+  if (!scores) return null;
 
   // Reframe hire_recommendation as readiness level
   function getReadinessLabel(recommendation) {
     const map = {
-      'Strong hire': { label: 'Interview Ready', color: '#22c55e' },
-      'Hire': { label: 'Almost Ready', color: '#22c55e' },
-      'Lean hire': { label: 'Getting There', color: '#eab308' },
-      'No hire': { label: 'Needs Practice', color: '#f97316' },
+      'Strong hire': { label: 'Interview Ready', color: '#10b981' },
+      'Hire': { label: 'Almost Ready', color: '#10b981' },
+      'Lean hire': { label: 'Getting There', color: '#f59e0b' },
+      'No hire': { label: 'Needs Practice', color: '#ef4444' },
     };
-    return map[recommendation] || { label: 'Practice Complete', color: '#c084fc' };
+    return map[recommendation] || { label: 'Practice Complete', color: '#6366f1' };
   }
 
   const readiness = getReadinessLabel(scores.hire_recommendation);
@@ -50,14 +47,44 @@ export default function FeedbackPage() {
     navigate('/upload');
   }
 
+  async function handleCopySummary() {
+    const domainLines = scores.domain_scores
+      ? Object.entries(scores.domain_scores)
+          .map(([domain, data]) => `- ${domain}: ${(data.score || 0).toFixed(1)}/10`)
+          .join('\n')
+      : 'No domain data available';
+
+    const text = `TaleemBot Interview Results
+Overall Score: ${(scores.overall_score || 0).toFixed(1)}/10
+Readiness: ${readiness.label}
+
+Domain Scores:
+${domainLines}
+
+${scores.summary_feedback || ''}`;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus('Copied!');
+      setTimeout(() => setCopyStatus(''), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }
+
   return (
     <div style={styles.container}>
       {/* Top bar */}
       <div style={styles.topBar}>
         <Logo size={40} />
-        <button onClick={handlePracticeAgain} style={styles.practiceBtn}>
-          Practice Again
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button onClick={handleCopySummary} style={styles.copyBtn}>
+            {copyStatus || 'Copy Summary'}
+          </button>
+          <button onClick={handlePracticeAgain} style={styles.practiceBtn}>
+            Practice Again
+          </button>
+        </div>
       </div>
 
       <div style={styles.content}>
@@ -86,7 +113,7 @@ export default function FeedbackPage() {
             <h2 style={styles.sectionTitle}>Domain Breakdown</h2>
             {Object.entries(scores.domain_scores).map(([domain, data]) => {
               const score = data.score || 0;
-              const barColor = score >= 7 ? '#22c55e' : score >= 5 ? '#eab308' : '#ef4444';
+              const barColor = score >= 7 ? '#10b981' : score >= 5 ? '#f59e0b' : '#ef4444';
               
               return (
                 <div key={domain} style={styles.domainCard}>
@@ -185,8 +212,8 @@ export default function FeedbackPage() {
 const styles = {
   container: {
     minHeight: '100vh',
-    backgroundColor: '#0f0f0f',
-    color: '#f0f0f0',
+    background: 'linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 100%)',
+    color: '#f1f5f9',
     fontFamily: 'system-ui, -apple-system, sans-serif',
   },
   topBar: {
@@ -194,14 +221,24 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '16px 32px',
-    borderBottom: '1px solid #2a2a2a',
+    borderBottom: '1px solid #1e1e35',
+  },
+  copyBtn: {
+    padding: '10px 20px',
+    borderRadius: '6px',
+    border: '1px solid #6366f1',
+    backgroundColor: 'transparent',
+    color: '#6366f1',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '500',
   },
   practiceBtn: {
     padding: '10px 20px',
     borderRadius: '6px',
-    border: '1px solid #c084fc',
+    border: '1px solid #6366f1',
     backgroundColor: 'transparent',
-    color: '#c084fc',
+    color: '#6366f1',
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '500',
@@ -222,21 +259,22 @@ const styles = {
     width: '160px',
     height: '160px',
     borderRadius: '50%',
-    border: '4px solid #c084fc',
+    border: '4px solid #6366f1',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#13131f',
+    boxShadow: '0 0 0 8px rgba(99, 102, 241, 0.2)',
   },
   scoreValue: {
     fontSize: '48px',
     fontWeight: '700',
-    color: '#c084fc',
+    color: '#6366f1',
   },
   scoreMax: {
     fontSize: '16px',
-    color: '#9ca3af',
+    color: '#64748b',
   },
   readinessBadge: {
     padding: '8px 24px',
@@ -246,7 +284,7 @@ const styles = {
   },
   motivational: {
     fontSize: '18px',
-    color: '#9ca3af',
+    color: '#64748b',
     textAlign: 'center',
     maxWidth: '600px',
     lineHeight: '1.6',
@@ -258,14 +296,15 @@ const styles = {
     fontSize: '24px',
     fontWeight: '600',
     marginBottom: '20px',
-    color: '#f0f0f0',
+    color: '#f1f5f9',
   },
   domainCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#13131f',
     borderRadius: '12px',
     padding: '24px',
     marginBottom: '16px',
-    border: '1px solid #2a2a2a',
+    border: '1px solid #1e1e35',
+    boxShadow: '0 4px 24px rgba(99, 102, 241, 0.08)',
   },
   domainHeader: {
     display: 'flex',
@@ -281,12 +320,12 @@ const styles = {
   domainScore: {
     fontSize: '16px',
     fontWeight: '600',
-    color: '#c084fc',
+    color: '#6366f1',
   },
   scoreBarContainer: {
     width: '100%',
     height: '8px',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#1e1e35',
     borderRadius: '4px',
     overflow: 'hidden',
     marginBottom: '16px',
@@ -297,7 +336,7 @@ const styles = {
   },
   reasoning: {
     fontSize: '14px',
-    color: '#9ca3af',
+    color: '#64748b',
     lineHeight: '1.6',
     marginBottom: '16px',
   },
@@ -314,7 +353,7 @@ const styles = {
   detailLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#c084fc',
+    color: '#6366f1',
     textTransform: 'uppercase',
   },
   detailText: {
@@ -325,15 +364,16 @@ const styles = {
   },
   coachingSection: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
+    gridTemplateColumns: '1fr',
     gap: '24px',
     marginBottom: '40px',
   },
   coachingColumn: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#13131f',
     borderRadius: '12px',
     padding: '24px',
-    border: '1px solid #2a2a2a',
+    border: '1px solid #1e1e35',
+    boxShadow: '0 4px 24px rgba(99, 102, 241, 0.08)',
   },
   coachingTitle: {
     fontSize: '18px',
@@ -351,7 +391,7 @@ const styles = {
     lineHeight: '1.5',
   },
   bulletIcon: {
-    color: '#22c55e',
+    color: '#10b981',
     fontWeight: '700',
     flexShrink: 0,
   },
@@ -365,15 +405,16 @@ const styles = {
     lineHeight: '1.5',
   },
   bulletIconOrange: {
-    color: '#f97316',
+    color: '#f59e0b',
     fontWeight: '700',
     flexShrink: 0,
   },
   tipsSection: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#13131f',
     borderRadius: '12px',
     padding: '24px',
-    border: '1px solid #2a2a2a',
+    border: '1px solid #1e1e35',
+    boxShadow: '0 4px 24px rgba(99, 102, 241, 0.08)',
   },
   tipItem: {
     display: 'flex',
@@ -393,11 +434,3 @@ const styles = {
     color: '#d1d5db',
   },
 };
-
-// Responsive adjustments
-if (typeof window !== 'undefined') {
-  const mediaQuery = window.matchMedia('(max-width: 768px)');
-  if (mediaQuery.matches) {
-    styles.coachingSection.gridTemplateColumns = '1fr';
-  }
-}

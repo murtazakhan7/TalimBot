@@ -265,7 +265,7 @@ async def start_interview(
             detail="Failed to generate opening question",
         )
 
-    # Convert question to speech
+    # Convert question to speech (applies to intro question too)
     audio_bytes = await text_to_speech(result["question"])
     audio_base64 = base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else ""
 

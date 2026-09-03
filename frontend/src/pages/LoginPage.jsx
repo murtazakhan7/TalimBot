@@ -68,6 +68,7 @@ export default function LoginPage() {
     <div style={styles.container}>
       <div style={styles.card}>
         <Logo size={48} />
+        <p style={styles.tagline}>Your AI-powered interview coach</p>
 
         {/* Tab switcher */}
         <div style={styles.tabs}>
@@ -101,7 +102,10 @@ export default function LoginPage() {
 
         {/* Login form */}
         {activeTab === 'login' && (
-          <div style={styles.form}>
+          <div
+            style={styles.form}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(e); }}
+          >
             <input
               type="email"
               placeholder="Email"
@@ -130,7 +134,10 @@ export default function LoginPage() {
 
         {/* Register form */}
         {activeTab === 'register' && (
-          <div style={styles.form}>
+          <div
+            style={styles.form}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleRegister(e); }}
+          >
             <input
               type="text"
               placeholder="Full Name"
@@ -172,8 +179,8 @@ export default function LoginPage() {
 const styles = {
   container: {
     minHeight: '100vh',
-    backgroundColor: '#0f0f0f',
-    color: '#f0f0f0',
+    background: 'linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 100%)',
+    color: '#f1f5f9',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -183,10 +190,17 @@ const styles = {
   card: {
     maxWidth: '400px',
     width: '100%',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#13131f',
     borderRadius: '12px',
     padding: '32px',
-    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.5)',
+    border: '1px solid #1e1e35',
+    boxShadow: '0 4px 24px rgba(99, 102, 241, 0.08)',
+  },
+  tagline: {
+    textAlign: 'center',
+    fontSize: '14px',
+    color: '#64748b',
+    margin: '8px 0 24px 0',
   },
   tabs: {
     display: 'flex',
@@ -198,19 +212,19 @@ const styles = {
     padding: '10px',
     border: 'none',
     borderRadius: '6px',
-    backgroundColor: '#2a2a2a',
-    color: '#9ca3af',
+    backgroundColor: '#1e1e35',
+    color: '#64748b',
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '500',
     transition: 'all 0.2s',
   },
   tabActive: {
-    backgroundColor: '#c084fc',
+    backgroundColor: '#6366f1',
     color: '#fff',
   },
   error: {
-    backgroundColor: '#7f1d1d',
+    backgroundColor: '#450a0a',
     color: '#fecaca',
     padding: '12px',
     borderRadius: '6px',
@@ -218,7 +232,7 @@ const styles = {
     fontSize: '14px',
   },
   success: {
-    backgroundColor: '#14532d',
+    backgroundColor: '#052e16',
     color: '#bbf7d0',
     padding: '12px',
     borderRadius: '6px',
@@ -233,9 +247,9 @@ const styles = {
   input: {
     padding: '12px',
     borderRadius: '6px',
-    border: '1px solid #3a3a3a',
-    backgroundColor: '#2a2a2a',
-    color: '#f0f0f0',
+    border: '1px solid #1e1e35',
+    backgroundColor: '#1e1e35',
+    color: '#f1f5f9',
     fontSize: '14px',
     outline: 'none',
   },
@@ -243,7 +257,7 @@ const styles = {
     padding: '12px',
     borderRadius: '6px',
     border: 'none',
-    backgroundColor: '#c084fc',
+    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
     color: '#fff',
     fontSize: '14px',
     fontWeight: '600',
