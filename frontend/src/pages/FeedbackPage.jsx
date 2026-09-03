@@ -60,7 +60,7 @@ export default function FeedbackPage() {
           .join('\n')
       : 'No domain data available';
 
-    const text = `TaleemBot Interview Results
+    const text = `TalimBot Interview Results
 Overall Score: ${(scores.overall_score || 0).toFixed(1)}/10
 Readiness: ${readiness.label}
 

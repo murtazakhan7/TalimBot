@@ -33,7 +33,7 @@ export default function Logo({ size = 40 }) {
       </svg>
       
       <span style={{ fontSize: '24px', fontWeight: '600', color: '#c084fc' }}>
-        TaleemBot
+        TalimBot
       </span>
     </div>
   );
