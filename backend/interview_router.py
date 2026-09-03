@@ -4,6 +4,7 @@ import base64
 import logging
 import os
 import tempfile
+import unicodedata
 import uuid
 from typing import Annotated, Optional
 
@@ -37,6 +38,11 @@ TTS_MODEL = os.getenv("TTS_MODEL", "cosyvoice-v3-flash")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+
+
+def sanitize_header(text: str) -> str:
+    """Replace non-latin-1 characters so they can be safely sent in HTTP headers."""
+    return unicodedata.normalize('NFKD', text).encode('latin-1', 'ignore').decode('latin-1')
 
 
 class StartInterviewBody(BaseModel):
@@ -83,7 +89,7 @@ async def submit_answer_text(
     audio_bytes = await text_to_speech(question_text)
 
     headers = {
-        "X-Question-Text": question_text,
+        "X-Question-Text": sanitize_header(question_text),
         "X-Interview-Done": "false",
     }
     return Response(content=audio_bytes, media_type="audio/mpeg", headers=headers)
@@ -209,7 +215,7 @@ async def text_to_speech(text: str) -> bytes:
             url,
             json={
                 "text": text,
-                "model_id": "eleven_monolingual_v1",
+                "model_id": "eleven_flash_v2_5",
                 "voice_settings": {
                     "stability": 0.5,
                     "similarity_boost": 0.75,
@@ -332,7 +338,7 @@ async def submit_answer(
     audio_bytes = await text_to_speech(question_text)
 
     headers = {
-        "X-Question-Text": question_text,
+        "X-Question-Text": sanitize_header(question_text),
         "X-Interview-Done": "false",
     }
 

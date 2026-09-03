@@ -173,13 +173,14 @@ import { submitAnswerText } from '../api/client';
 //   return { isRecording, isProcessing, startRecording, stopRecording, error };
 // }
 
-export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInterviewComplete }) {
+export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInterviewComplete, onTranscriptCaptured }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
 
   const recognitionRef = useRef(null);
   const transcriptRef = useRef('');
+  const maxTimeTimerRef = useRef(null);
 
   // Check browser support on init
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -200,6 +201,14 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
     recognition.lang = 'en-US';
     recognition.continuous = false;
     recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    // Maximum recording time of 60 seconds
+    maxTimeTimerRef.current = setTimeout(() => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    }, 60000);
 
     recognition.onstart = () => {
       setIsRecording(true);
@@ -214,6 +223,12 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
     };
 
     recognition.onend = async () => {
+      // Clear the max time timer
+      if (maxTimeTimerRef.current) {
+        clearTimeout(maxTimeTimerRef.current);
+        maxTimeTimerRef.current = null;
+      }
+
       setIsRecording(false);
 
       const transcript = transcriptRef.current;
@@ -221,6 +236,11 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
         setError('No speech detected. Please try again.');
         setIsProcessing(false);
         return;
+      }
+
+      // Notify parent about captured transcript
+      if (onTranscriptCaptured) {
+        onTranscriptCaptured(transcript);
       }
 
       try {
@@ -253,6 +273,12 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
     };
 
     recognition.onerror = (event) => {
+      // Clear the max time timer
+      if (maxTimeTimerRef.current) {
+        clearTimeout(maxTimeTimerRef.current);
+        maxTimeTimerRef.current = null;
+      }
+
       setIsRecording(false);
       setIsProcessing(false);
 
@@ -273,11 +299,16 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [sessionId, onQuestionReceived, onInterviewComplete]);
+  }, [sessionId, onQuestionReceived, onInterviewComplete, onTranscriptCaptured]);
 
   const stopRecording = useCallback(() => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
+    }
+    // Clear the max time timer
+    if (maxTimeTimerRef.current) {
+      clearTimeout(maxTimeTimerRef.current);
+      maxTimeTimerRef.current = null;
     }
     setIsRecording(false);
   }, []);

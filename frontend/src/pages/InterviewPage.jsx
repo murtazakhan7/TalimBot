@@ -27,6 +27,7 @@ export default function InterviewPage() {
   const [domainsCovered, setDomainsCovered] = useState(parseInt(sessionStorage.getItem('domains_covered') || '0'));
   const [isPlaying, setIsPlaying] = useState(false);
   const [statusText, setStatusText] = useState('Interviewer speaking...');
+  const [lastTranscript, setLastTranscript] = useState('');
 
   // Check session validity on mount
   useEffect(() => {
@@ -67,6 +68,9 @@ export default function InterviewPage() {
     onInterviewComplete: (scores) => {
       sessionStorage.setItem('interview_scores', JSON.stringify(scores));
       navigate('/feedback');
+    },
+    onTranscriptCaptured: (transcript) => {
+      setLastTranscript(transcript);
     },
   });
 
@@ -209,6 +213,13 @@ export default function InterviewPage() {
           {isRecording ? '■' : '●'}
         </button>
 
+        {/* Transcript display */}
+        {lastTranscript && (
+          <div style={styles.transcriptBox}>
+            <span style={styles.transcriptLabel}>You said:</span> {lastTranscript}
+          </div>
+        )}
+
         {/* Recorder error */}
         {recorderError && (
           <div style={styles.error}>{recorderError}</div>
@@ -306,6 +317,18 @@ const styles = {
     backgroundColor: '#c084fc',
     color: '#fff',
     transform: 'scale(1.1)',
+  },
+  transcriptBox: {
+    maxWidth: '600px',
+    textAlign: 'center',
+    fontSize: '13px',
+    color: '#6b7280',
+    fontStyle: 'italic',
+    lineHeight: '1.5',
+  },
+  transcriptLabel: {
+    fontWeight: '600',
+    color: '#9ca3af',
   },
   error: {
     backgroundColor: '#7f1d1d',
