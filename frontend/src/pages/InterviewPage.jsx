@@ -9,6 +9,8 @@ export default function InterviewPage() {
   const audioRef = useRef(null);
   const interviewStartRef = useRef(Date.now());
   const proctorTimerRef = useRef(null);
+  const micLevelRef = useRef(null);
+  const animFrameRef = useRef(null);
 
   // Read session data
   const sessionId = sessionStorage.getItem('session_id');
@@ -23,6 +25,7 @@ export default function InterviewPage() {
   const [currentDomain, setCurrentDomain] = useState(sessionStorage.getItem('current_domain') || 'General');
   const [questionNumber, setQuestionNumber] = useState(parseInt(sessionStorage.getItem('question_number') || '1'));
   const [isPlaying, setIsPlaying] = useState(false);
+  const [canReplay, setCanReplay] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(120);
 
   // Check session validity on mount
@@ -92,6 +95,42 @@ export default function InterviewPage() {
     }
   }, [isRecording]);
 
+  // Mic level meter while recording
+  useEffect(() => {
+    if (!isRecording) {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (micLevelRef.current) micLevelRef.current.style.width = '0%';
+      return;
+    }
+
+    let stream, audioContext, analyser, source;
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(s => {
+      stream = s;
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      function tick() {
+        analyser.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        const pct = Math.min(100, (avg / 128) * 100);
+        if (micLevelRef.current) micLevelRef.current.style.width = pct + '%';
+        animFrameRef.current = requestAnimationFrame(tick);
+      }
+      tick();
+    }).catch(() => {});
+
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (audioContext) audioContext.close();
+    };
+  }, [isRecording]);
+
   // Proctoring: track tab switches
   useEffect(() => {
     if (!isReady) return;
@@ -131,10 +170,12 @@ export default function InterviewPage() {
 
   function handleAudioEnded() {
     setIsPlaying(false);
+    setCanReplay(true);
   }
 
   function handleAudioPlay() {
     setIsPlaying(true);
+    setCanReplay(false);
   }
 
   // Helper: convert base64 to Blob
@@ -244,6 +285,21 @@ export default function InterviewPage() {
           <h2 style={styles.questionText}>{currentQuestion}</h2>
         </div>
 
+        {canReplay && !isRecording && !isProcessing && (
+          <button
+            onClick={() => {
+              if (audioRef.current) {
+                audioRef.current.currentTime = 0;
+                audioRef.current.play().catch(() => {});
+                setCanReplay(false);
+              }
+            }}
+            style={styles.replayBtn}
+          >
+            ↩ Replay Question
+          </button>
+        )}
+
         {/* Audio element (hidden, controlled programmatically) */}
         <audio
           ref={audioRef}
@@ -279,10 +335,19 @@ export default function InterviewPage() {
             {isRecording ? 'Tap to Stop' : isCandidateTurn ? 'Tap to Answer' : 'Please Wait'}
           </div>
 
+          {/* Mic level meter */}
+          {isRecording && (
+            <div style={styles.micMeterContainer}>
+              <div style={styles.micMeterLabel}>Mic level</div>
+              <div style={styles.micMeterTrack}>
+                <div ref={micLevelRef} style={styles.micMeterFill} />
+              </div>
+            </div>
+          )}
+
           {/* Live transcript while recording */}
           {isRecording && liveTranscript && (
             <div style={styles.liveTranscript}>
-              {/* TODO: hide in production */}
               <span style={styles.liveTranscriptLabel}>Hearing:</span> {liveTranscript}
             </div>
           )}
@@ -501,6 +566,42 @@ const styles = {
     fontSize: '14px',
     color: '#64748b',
     fontWeight: '500',
+  },
+  micMeterContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '4px',
+    width: '200px',
+  },
+  micMeterLabel: {
+    fontSize: '11px',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  micMeterTrack: {
+    width: '100%',
+    height: '6px',
+    backgroundColor: '#1e1e35',
+    borderRadius: '3px',
+    overflow: 'hidden',
+  },
+  micMeterFill: {
+    height: '100%',
+    width: '0%',
+    backgroundColor: '#10b981',
+    borderRadius: '3px',
+    transition: 'width 0.1s ease',
+  },
+  replayBtn: {
+    padding: '6px 16px',
+    borderRadius: '6px',
+    border: '1px solid #1e1e35',
+    backgroundColor: 'transparent',
+    color: '#64748b',
+    fontSize: '13px',
+    cursor: 'pointer',
   },
   liveTranscript: {
     maxWidth: '600px',

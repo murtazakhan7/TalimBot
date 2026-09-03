@@ -41,6 +41,10 @@ load_dotenv()
 logger = logging.getLogger("taleembot.interview_graph")
 
 MAX_QUESTIONS = 5
+INTRO_QUESTION = (
+    "To get us started, could you please introduce yourself and tell me a bit about "
+    "your background?"
+)
 DEFAULT_DOMAINS = [
     "Technical Expertise",
     "Problem Solving",
@@ -51,29 +55,70 @@ _EXTRACTOR_SYSTEM = (
     "Read the job description and the candidate's CV, then identify exactly 2 core "
     "skill domains the company actually cares about for this role. Return ONLY a "
     "JSON array of 2 short domain names (2-5 words each), e.g. "
-    '["Backend APIs", "React Frontend"]. "
+    '["Backend APIs", "React Frontend"]. '
     "No prose, no markdown."
 )
+
+_CV_SUMMARY_SYSTEM = """You are a recruitment assistant. Compress the provided CV into a concise 150-word candidate profile covering:
+- Total years of experience (or student/fresh graduate status)
+- Core technical skills and stacks
+- Notable projects or achievements (with specifics if present)
+- Most recent role or current status
+
+Be factual. Only include what is explicitly stated. Do not infer or embellish."""
 
 _QUESTION_SYSTEM = (
     "You are TaleemBot, a senior interviewer conducting a structured voice interview. "
     "Ask exactly ONE question per turn. The question is spoken aloud by a TTS voice, "
     "so keep it conversational, natural and under 60 words. Never reveal scoring, "
     "domains covered, or that you are an AI state machine. Output only the question "
-    "text, no preamble, no quotes."
+    "text, no preamble, no quotes. "
+    "Format questions for spoken audio: spell out all abbreviations and symbols as "
+    "words (say \"and\" not \"&\", \"Kubernetes\" not \"k8s\", \"React\" not \"ReactJS\", "
+    "\"versus\" not \"vs\", \"for example\" not \"e.g.\"). Never use bullet points, "
+    "slashes, parentheses, or special characters. Write as natural speech."
 )
 
-_EVALUATOR_SYSTEM = (
-    "You are a strict but fair hiring manager evaluating a completed voice interview. "
-    "Score every domain 0-10 (0 = no competence, 10 = expert). overall_score is the "
-    "average of domain scores weighted by how central each domain is to the job "
-    "description. hire_recommendation must be one of: \"Strong hire\", \"Hire\", "
-    "\"Lean hire\", \"No hire\". Be honest: reward concrete examples and depth, "
-    "penalise vagueness. Return ONLY a JSON object with keys: domain_scores (object "
-    "mapping each domain name to a number), overall_score (number), "
-    "hire_recommendation (string), strengths (array of strings), improvements "
-    "(array of strings), summary (string, 2-4 sentences). No prose, no markdown."
-)
+_EVALUATOR_SYSTEM = """You are a fair and calibrated interview evaluator assessing a candidate who is a fresh graduate or early-career professional practicing for entry-level to mid-level roles. Score accordingly — do not apply a senior engineer standard.
+
+Evaluate based on:
+- Did they actually answer the question asked? (relevance)
+- Do they demonstrate genuine understanding of the concept, not just buzzwords?
+- Can they support their answer with a specific example, project, or experience?
+- Can they communicate clearly and coherently?
+
+Do NOT penalize for:
+- Not using any framework (STAR, SOAR, etc.) — frameworks are never required
+- Conversational speech patterns, filler words, or mid-sentence rephrasing — this is spoken audio transcribed, not written text
+- Using plain language instead of technical jargon, as long as the understanding is correct
+- Incomplete answers that show the right thinking — reward direction of understanding, not perfection
+- Pausing, repeating, or self-correcting — these are normal in speech
+
+For each domain, also return:
+- expected_highlights: 2-3 things a strong answer to this domain's questions should have demonstrated (concept-based, not framework-based — e.g. "awareness of tradeoffs", "a specific project example", "understanding of why not just what")
+- question_notes: a one-line note per question on what the candidate's answer did well or missed specifically
+
+Return a JSON object with this exact structure:
+{
+  "overall_score": <float 1-10>,
+  "domain_scores": {
+    "<domain_name>": {
+      "score": <float 1-10>,
+      "reasoning": "<2-3 sentences>",
+      "strength": "<one thing they did well>",
+      "gap": "<one thing to improve>",
+      "expected_highlights": ["<highlight 1>", "<highlight 2>", "<highlight 3>"],
+      "question_notes": ["<note on Q1 in this domain>", "<note on Q2 in this domain>"]
+    }
+  },
+  "summary_feedback": "<3-4 sentences overall>",
+  "detailed_feedback": {
+    "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
+    "improvements": ["<improvement 1>", "<improvement 2>", "<improvement 3>"],
+    "interview_tips": ["<tip 1>", "<tip 2>", "<tip 3>"]
+  },
+  "hire_recommendation": "<Strong hire | Hire | Lean hire | No hire>"
+}"""
 
 
 class InterviewState(TypedDict, total=False):
@@ -88,6 +133,7 @@ class InterviewState(TypedDict, total=False):
     scores: Optional[dict]
     interview_complete: bool
     cv_text: str
+    cv_summary: str
     jd_text: str
     candidate_name: str
     session_id: str
@@ -114,8 +160,10 @@ def get_llm():
     return _model
 
 
-def _ask_llm(system: str, human: str) -> str:
-    response = get_llm().invoke([SystemMessage(content=system), HumanMessage(content=human)])
+def _ask_llm(system: str, human: str, temperature: float = 0.7) -> str:
+    response = get_llm().bind(temperature=temperature).invoke(
+        [SystemMessage(content=system), HumanMessage(content=human)]
+    )
     return response.content if isinstance(response.content, str) else str(response.content)
 
 
@@ -155,30 +203,39 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "\n[...truncated]"
 
 
+def _summarize_cv(cv_text: str) -> str:
+    # Spec showed async, but all graph nodes run via sync graph.invoke()
+    return _ask_llm(_CV_SUMMARY_SYSTEM, cv_text[:8000], temperature=0.1).strip()
+
+
 # -------------------------------------------------------------------------- nodes
 
 def domain_extractor(state: InterviewState) -> dict:
+    if state.get("domains") and state.get("cv_summary"):
+        return {}  # cached in state; never re-run, even on reconnect
+    cv_summary = state.get("cv_summary") or _summarize_cv(state.get("cv_text", ""))
     if state.get("domains"):
-        return {}  # cached in state; never re-extracted, even on reconnect
+        return {"cv_summary": cv_summary}
     raw = _ask_llm(
         _EXTRACTOR_SYSTEM,
         "JOB DESCRIPTION:\n"
         + _clip(state.get("jd_text", ""), 6000)
-        + "\n\nCANDIDATE CV:\n"
-        + _clip(state.get("cv_text", ""), 6000),
+        + "\n\nCANDIDATE PROFILE:\n"
+        + cv_summary,
+        temperature=0.1,
     )
     parsed = _extract_json(raw, "[")
     domains = [d.strip() for d in parsed if isinstance(d, str) and d.strip()] if isinstance(parsed, list) else []
     if len(domains) < 2:
         logger.warning("Domain extraction returned %r; using default domains", raw[:200])
         domains = list(DEFAULT_DOMAINS)
-    return {"domains": domains[:4], "current_domain_index": 0}
+    return {"domains": domains[:2], "current_domain_index": 0, "cv_summary": cv_summary}
 
 
 def question_generator(state: InterviewState) -> dict:
     # First question is always an introduction
     if not state.get("qa_pairs") and not state.get("domains_covered"):
-        return {"current_question": "To get us started, could you please introduce yourself and tell me a bit about your background?"}
+        return {"current_question": INTRO_QUESTION}
 
     domains = state["domains"]
     index = min(state.get("current_domain_index", 0), len(domains) - 1)
@@ -190,16 +247,18 @@ def question_generator(state: InterviewState) -> dict:
     
     if domain_qa_count == 0:
         # Opener question for this domain
+        temp = 0.8
         human = (
             f"This opens the '{domain}' domain of the interview with {name}.\n"
             f"JOB DESCRIPTION (excerpt):\n{_clip(state.get('jd_text', ''), 3000)}\n\n"
-            f"CANDIDATE CV (excerpt):\n{_clip(state.get('cv_text', ''), 3000)}\n\n"
+            f"CANDIDATE PROFILE:\n{state.get('cv_summary', '')}\n\n"
             f"Ask ONE opening question that assesses {domain} for this role. Where the "
-            f"CV shows relevant experience, anchor the question to it so the candidate "
+            f"profile shows relevant experience, anchor the question to it so the candidate "
             f"can demonstrate real depth."
         )
     else:
         # Follow-up question based on last answer in this domain
+        temp = 0.7
         history = [p for p in state.get("qa_pairs", []) if p["domain"] == domain][-1:]
         transcript = "\n".join(f"Q: {p['question']}\nA: {p['answer']}" for p in history)
         human = (
@@ -210,7 +269,7 @@ def question_generator(state: InterviewState) -> dict:
             f"repeat an earlier question and do not switch topics."
         )
 
-    question = _ask_llm(_QUESTION_SYSTEM, human).strip().strip('"').strip()
+    question = _ask_llm(_QUESTION_SYSTEM, human, temperature=temp).strip().strip('"').strip()
     updates: dict = {"current_question": question}
     if domain_qa_count == 0:
         updates["domains_covered"] = [domain]
@@ -223,7 +282,11 @@ def answer_recorder(state: InterviewState) -> dict:
     if not question or not answer:
         return {}
     domains = state["domains"]
-    domain = domains[min(state.get("current_domain_index", 0), len(domains) - 1)]
+    if not state.get("domains_covered"):
+        # Intro answer: keep it out of domain tallies so Domain 1 still gets a real opener
+        domain = "Introduction"
+    else:
+        domain = domains[min(state.get("current_domain_index", 0), len(domains) - 1)]
     pair = {
         "domain": domain,
         "question": question,
@@ -272,7 +335,9 @@ def evaluator(state: InterviewState) -> dict:
         _EVALUATOR_SYSTEM,
         f"Domains assessed: {json.dumps(state.get('domains', []))}\n\n"
         f"JOB DESCRIPTION (excerpt):\n{_clip(state.get('jd_text', ''), 3000)}\n\n"
+        f"CANDIDATE CV:\n{_clip(state.get('cv_text', ''), 6000)}\n\n"
         f"FULL INTERVIEW TRANSCRIPT:\n{transcript}{notes}",
+        temperature=0.1,
     )
     parsed = _extract_json(raw, "{")
     scores = _normalize_scores(parsed if isinstance(parsed, dict) else None, state.get("domains", []))
@@ -280,19 +345,30 @@ def evaluator(state: InterviewState) -> dict:
 
 
 def _normalize_scores(parsed: Optional[dict], domains: list[str]) -> dict:
-    domain_scores: dict[str, float] = {}
-    for d in domains:
-        value = (parsed or {}).get("domain_scores", {}).get(d, 5.0) if parsed else 5.0
+    parsed = parsed or {}
+
+    def _clamp(value, default: float = 5.0) -> float:
         try:
-            domain_scores[d] = round(max(0.0, min(10.0, float(value))), 1)
+            return round(max(0.0, min(10.0, float(value))), 1)
         except (TypeError, ValueError):
-            domain_scores[d] = 5.0
-    overall = (parsed or {}).get("overall_score") if parsed else None
-    try:
-        overall = round(max(0.0, min(10.0, float(overall))), 1)
-    except (TypeError, ValueError):
-        overall = round(sum(domain_scores.values()) / max(1, len(domain_scores)), 1)
-    recommendation = (parsed or {}).get("hire_recommendation") if parsed else None
+            return default
+
+    raw_domains = parsed.get("domain_scores") or {}
+    domain_scores: dict[str, Any] = {}
+    for d in domains:
+        raw = raw_domains.get(d)
+        if isinstance(raw, dict):
+            entry = dict(raw)
+            entry["score"] = _clamp(raw.get("score"))
+            entry["expected_highlights"] = [s for s in (raw.get("expected_highlights") or []) if isinstance(s, str)]
+            entry["question_notes"] = [s for s in (raw.get("question_notes") or []) if isinstance(s, str)]
+            domain_scores[d] = entry
+        else:
+            domain_scores[d] = _clamp(raw)
+
+    values = [v["score"] if isinstance(v, dict) else v for v in domain_scores.values()]
+    overall = _clamp(parsed.get("overall_score"), default=round(sum(values) / max(1, len(values)), 1))
+    recommendation = parsed.get("hire_recommendation")
     if recommendation not in ("Strong hire", "Hire", "Lean hire", "No hire"):
         recommendation = (
             "Strong hire" if overall >= 8
@@ -300,13 +376,20 @@ def _normalize_scores(parsed: Optional[dict], domains: list[str]) -> dict:
             else "Lean hire" if overall >= 5
             else "No hire"
         )
+    detailed = parsed.get("detailed_feedback") or {}
+    strengths = [s for s in (detailed.get("strengths") or parsed.get("strengths") or []) if isinstance(s, str)]
+    improvements = [s for s in (detailed.get("improvements") or parsed.get("improvements") or []) if isinstance(s, str)]
+    tips = [s for s in (detailed.get("interview_tips") or parsed.get("interview_tips") or []) if isinstance(s, str)]
+    summary = str(parsed.get("summary_feedback") or parsed.get("summary") or "No summary provided.")
     return {
         "domain_scores": domain_scores,
         "overall_score": overall,
         "hire_recommendation": recommendation,
-        "strengths": [s for s in ((parsed or {}).get("strengths") or []) if isinstance(s, str)],
-        "improvements": [s for s in ((parsed or {}).get("improvements") or []) if isinstance(s, str)],
-        "summary": str((parsed or {}).get("summary") or "No summary provided."),
+        "strengths": strengths,
+        "improvements": improvements,
+        "summary": summary,
+        "summary_feedback": summary,
+        "detailed_feedback": {"strengths": strengths, "improvements": improvements, "interview_tips": tips},
     }
 
 

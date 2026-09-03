@@ -32,6 +32,12 @@ export default function FeedbackPage() {
 
   const readiness = getReadinessLabel(scores.hire_recommendation);
 
+  // Backend emits {domain: number} scores plus top-level strengths/improvements/summary
+  const domainScore = (data) => (typeof data === 'number' ? data : (data?.score || 0));
+  const strengths = scores.detailed_feedback?.strengths || scores.strengths || [];
+  const improvements = scores.detailed_feedback?.improvements || scores.improvements || [];
+  const summaryText = scores.summary_feedback || scores.summary || '';
+
   // Motivational message based on score
   function getMotivationalMessage(score) {
     if (score >= 8) return "Excellent work! You're well prepared for real interviews.";
@@ -50,7 +56,7 @@ export default function FeedbackPage() {
   async function handleCopySummary() {
     const domainLines = scores.domain_scores
       ? Object.entries(scores.domain_scores)
-          .map(([domain, data]) => `- ${domain}: ${(data.score || 0).toFixed(1)}/10`)
+          .map(([domain, data]) => `- ${domain}: ${domainScore(data).toFixed(1)}/10`)
           .join('\n')
       : 'No domain data available';
 
@@ -61,7 +67,7 @@ Readiness: ${readiness.label}
 Domain Scores:
 ${domainLines}
 
-${scores.summary_feedback || ''}`;
+${summaryText}`;
 
     try {
       await navigator.clipboard.writeText(text);
@@ -112,7 +118,7 @@ ${scores.summary_feedback || ''}`;
           <div style={styles.section}>
             <h2 style={styles.sectionTitle}>Domain Breakdown</h2>
             {Object.entries(scores.domain_scores).map(([domain, data]) => {
-              const score = data.score || 0;
+              const score = domainScore(data);
               const barColor = score >= 7 ? '#10b981' : score >= 5 ? '#f59e0b' : '#ef4444';
               
               return (
@@ -139,6 +145,7 @@ ${scores.summary_feedback || ''}`;
                   )}
 
                   {/* Strength and gap */}
+                  {(data.strength || data.gap) && (
                   <div style={styles.domainDetails}>
                     {data.strength && (
                       <div style={styles.detailItem}>
@@ -153,6 +160,19 @@ ${scores.summary_feedback || ''}`;
                       </div>
                     )}
                   </div>
+                  )}
+
+                  {data.expected_highlights && data.expected_highlights.length > 0 && (
+                    <div style={styles.highlightsSection}>
+                      <span style={styles.detailLabel}>What a strong answer covers:</span>
+                      {data.expected_highlights.map((h, i) => (
+                        <div key={i} style={styles.highlightItem}>
+                          <span style={styles.highlightDot}>◆</span>
+                          <span>{h}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -160,19 +180,19 @@ ${scores.summary_feedback || ''}`;
         )}
 
         {/* Overall assessment */}
-        {scores.summary_feedback && (
+        {summaryText && (
           <div style={styles.section}>
             <h2 style={styles.sectionTitle}>Overall Assessment</h2>
-            <p style={styles.summaryText}>{scores.summary_feedback}</p>
+            <p style={styles.summaryText}>{summaryText}</p>
           </div>
         )}
 
         {/* Coaching section */}
-        {scores.detailed_feedback && (
+        {(strengths.length > 0 || improvements.length > 0) && (
           <div style={styles.coachingSection}>
             <div style={styles.coachingColumn}>
               <h3 style={styles.coachingTitle}>Your Strengths</h3>
-              {scores.detailed_feedback.strengths?.map((item, idx) => (
+              {strengths.map((item, idx) => (
                 <div key={idx} style={styles.bulletPoint}>
                   <span style={styles.bulletIcon}>✓</span>
                   <span>{item}</span>
@@ -182,7 +202,7 @@ ${scores.summary_feedback || ''}`;
 
             <div style={styles.coachingColumn}>
               <h3 style={styles.coachingTitle}>Work On These</h3>
-              {scores.detailed_feedback.improvements?.map((item, idx) => (
+              {improvements.map((item, idx) => (
                 <div key={idx} style={styles.bulletPointOrange}>
                   <span style={styles.bulletIconOrange}>→</span>
                   <span>{item}</span>
@@ -361,6 +381,28 @@ const styles = {
     color: '#d1d5db',
     lineHeight: '1.5',
     margin: 0,
+  },
+  highlightsSection: {
+    marginTop: '12px',
+    padding: '12px',
+    backgroundColor: '#0f0f1a',
+    borderRadius: '8px',
+    border: '1px solid #1e1e35',
+  },
+  highlightItem: {
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'flex-start',
+    marginTop: '6px',
+    fontSize: '13px',
+    color: '#94a3b8',
+    lineHeight: '1.5',
+  },
+  highlightDot: {
+    color: '#6366f1',
+    fontSize: '10px',
+    flexShrink: 0,
+    marginTop: '3px',
   },
   coachingSection: {
     display: 'grid',

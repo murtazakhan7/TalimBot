@@ -1,5 +1,6 @@
 """Interview router: orchestrates the full voice interview pipeline per turn."""
 
+import asyncio
 import base64
 import logging
 import os
@@ -13,6 +14,7 @@ from dashscope.audio.asr import Recognition
 from dashscope.audio.tts_v2 import SpeechSynthesizer
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +28,7 @@ from backend.db import (
     save_scores_to_db,
     save_session_to_db,
 )
-from langgraph_engine.interview_graph import InterviewSession
+from langgraph_engine.interview_graph import INTRO_QUESTION, InterviewSession
 
 logger = logging.getLogger("taleembot.interview")
 
@@ -83,7 +85,10 @@ async def submit_answer_text(
                 await save_scores_to_db(session_id, result["scores"])
         except Exception as exc:
             logger.error("Failed to persist final results for session %s: %s", session_id, exc)
-        return {"done": True, "scores": result.get("scores"), "session_id": session_id}
+        return JSONResponse(
+            content={"done": True, "scores": result.get("scores"), "session_id": session_id},
+            headers={"X-Interview-Done": "true"},
+        )
 
     question_text = result.get("question", "")
     audio_bytes = await text_to_speech(question_text)
@@ -253,23 +258,31 @@ async def start_interview(
     session_id = str(uuid.uuid4())
     session = InterviewSession(session_id=session_id)
 
-    result = session.start_interview(
-        cv_text=body.cv_text,
-        jd_text=body.jd_text,
-        candidate_name=body.candidate_name,
+    # The intro question is hardcoded, so its TTS doesn't depend on the graph —
+    # run them concurrently. to_thread keeps the sync LangGraph call off the loop.
+    result, intro_audio = await asyncio.gather(
+        asyncio.to_thread(
+            session.start_interview,
+            cv_text=body.cv_text,
+            jd_text=body.jd_text,
+            candidate_name=body.candidate_name,
+        ),
+        text_to_speech(INTRO_QUESTION),
     )
 
-    if not result.get("question"):
+    question = result.get("question") or ""
+    if not question:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate opening question",
         )
 
-    # Convert question to speech (applies to intro question too)
-    audio_bytes = await text_to_speech(result["question"])
+    # New sessions always get the hardcoded intro → reuse the parallel audio.
+    # A resumed checkpoint may hold a domain question → synthesize that instead.
+    audio_bytes = intro_audio if question == INTRO_QUESTION else await text_to_speech(question)
     audio_base64 = base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else ""
 
-    # Persist to database
+    # Persist to database (after both gather results are ready)
     await save_session_to_db(
         session_id=session_id,
         user_id=current_user.id,
@@ -284,7 +297,7 @@ async def start_interview(
 
     return StartInterviewResponse(
         session_id=session_id,
-        question_text=result["question"],
+        question_text=question,
         audio_base64=audio_base64,
     )
 
@@ -327,11 +340,14 @@ async def submit_answer(
             logger.error("Failed to persist final results for session %s: %s",
                           session_id, exc)
 
-        return {
-            "done": True,
-            "scores": result.get("scores"),
-            "session_id": session_id,
-        }
+        return JSONResponse(
+            content={
+                "done": True,
+                "scores": result.get("scores"),
+                "session_id": session_id,
+            },
+            headers={"X-Interview-Done": "true"},
+        )
 
     # Not complete — convert next question to audio and stream back
     question_text = result.get("question", "")
