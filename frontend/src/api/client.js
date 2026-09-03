@@ -88,6 +88,17 @@ export async function submitAnswer(sessionId, audioBlob) {
   });
 }
 
+/**
+ * Submit transcript text directly as the candidate's answer.
+ * Used by Web Speech API frontend. Returns full axios response with blob.
+ */
+export async function submitAnswerText(sessionId, transcript) {
+  return client.post(`/interview/${sessionId}/answer-text`,
+    { transcript },
+    { responseType: 'blob' }
+  );
+}
+
 export async function getInterviewStatus(sessionId) {
   const res = await client.get(`/interview/${sessionId}/status`);
   return res.data;

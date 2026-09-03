@@ -51,6 +51,44 @@ class StartInterviewResponse(BaseModel):
     audio_base64: str
 
 
+class TextAnswerBody(BaseModel):
+    transcript: str
+
+
+@router.post("/{session_id}/answer-text")
+async def submit_answer_text(
+    session_id: str,
+    body: TextAnswerBody,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Accept transcript text directly instead of audio. Used by Web Speech API frontend."""
+    transcript = body.transcript.strip()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Transcript cannot be empty")
+
+    session = InterviewSession(session_id=session_id)
+    result = session.submit_answer(transcript)
+
+    if result.get("interview_complete"):
+        try:
+            qa_pairs = session.graph.get_state(session.config).values.get("qa_pairs", [])
+            await save_qa_pairs_to_db(session_id, qa_pairs)
+            if result.get("scores"):
+                await save_scores_to_db(session_id, result["scores"])
+        except Exception as exc:
+            logger.error("Failed to persist final results for session %s: %s", session_id, exc)
+        return {"done": True, "scores": result.get("scores"), "session_id": session_id}
+
+    question_text = result.get("question", "")
+    audio_bytes = await text_to_speech(question_text)
+
+    headers = {
+        "X-Question-Text": question_text,
+        "X-Interview-Done": "false",
+    }
+    return Response(content=audio_bytes, media_type="audio/mpeg", headers=headers)
+
+
 async def transcribe_audio(audio_bytes: bytes, filename: str) -> str:
     """Send audio to DashScope ASR API and return transcript text."""
     if not DASHSCOPE_API_KEY:
@@ -126,76 +164,76 @@ async def transcribe_audio(audio_bytes: bytes, filename: str) -> str:
 #     return response.text.strip()
 
 
-async def text_to_speech(text: str) -> bytes:
-    """Convert text to speech via DashScope TTS. Returns audio bytes."""
-    if not text:
-        return b""
-
-    if not DASHSCOPE_API_KEY or DASHSCOPE_API_KEY.startswith("your_"):
-        logger.warning("DashScope API key not configured; returning empty audio for dev mode")
-        return b""
-
-    dashscope.api_key = DASHSCOPE_API_KEY
-
-    try:
-        synthesizer = SpeechSynthesizer(model=TTS_MODEL, voice="longxiaochun")
-        audio = synthesizer.call(text)
-
-        if audio is None:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="TTS returned no audio")
-
-        return bytes(audio)
-    except Exception as exc:
-        err_str = str(exc).lower()
-        # Invalid/expired key or connection refused — silently fall back to dev mode
-        if any(kw in err_str for kw in ["invalid", "401", "unauthorized", "connection is already closed"]):
-            logger.warning("DashScope TTS auth/connection error; returning empty audio for dev mode")
-            return b""
-        logger.error("DashScope TTS error: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"TTS failed: {exc}",
-        ) from exc
-
-
-# --- OLD ELEVENLABS CODE (commented out for quick revert) ---
+# --- DASHSCOPE TTS CODE (commented out for quick revert) ---
 # async def text_to_speech(text: str) -> bytes:
-#     """Convert text to speech via ElevenLabs. Returns MP3 bytes."""
-#     if not ELEVENLABS_API_KEY or ELEVENLABS_API_KEY.startswith("your_"):
-#         logger.warning("ElevenLabs API key not configured; returning empty audio for dev mode")
+#     """Convert text to speech via DashScope TTS. Returns audio bytes."""
+#     if not text:
 #         return b""
 #
-#     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
-#     async with httpx.AsyncClient(timeout=30.0) as client:
-#         response = await client.post(
-#             url,
-#             json={
-#                 "text": text,
-#                 "model_id": "eleven_monolingual_v1",
-#                 "voice_settings": {
-#                     "stability": 0.5,
-#                     "similarity_boost": 0.75,
-#                 },
-#             },
-#             headers={
-#                 "xi-api-key": ELEVENLABS_API_KEY,
-#                 "Content-Type": "application/json",
-#             },
-#         )
-#
-#     if response.status_code == 401:
-#         # Invalid/expired key — silently fall back to dev mode instead of crashing
-#         logger.warning("ElevenLabs returned 401 (invalid key); returning empty audio for dev mode")
+#     if not DASHSCOPE_API_KEY or DASHSCOPE_API_KEY.startswith("your_"):
+#         logger.warning("DashScope API key not configured; returning empty audio for dev mode")
 #         return b""
 #
-#     if response.status_code != 200:
-#         logger.error("ElevenLabs API error: %s — %s", response.status_code, response.text[:300])
+#     dashscope.api_key = DASHSCOPE_API_KEY
+#
+#     try:
+#         synthesizer = SpeechSynthesizer(model=TTS_MODEL, voice="longxiaochun")
+#         audio = synthesizer.call(text)
+#
+#         if audio is None:
+#             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="TTS returned no audio")
+#
+#         return bytes(audio)
+#     except Exception as exc:
+#         err_str = str(exc).lower()
+#         # Invalid/expired key or connection refused — silently fall back to dev mode
+#         if any(kw in err_str for kw in ["invalid", "401", "unauthorized", "connection is already closed"]):
+#             logger.warning("DashScope TTS auth/connection error; returning empty audio for dev mode")
+#             return b""
+#         logger.error("DashScope TTS error: %s", exc)
 #         raise HTTPException(
 #             status_code=status.HTTP_502_BAD_GATEWAY,
-#             detail=f"ElevenLabs TTS failed: {response.status_code}",
-#         )
-#
-#     return response.content
+#             detail=f"TTS failed: {exc}",
+#         ) from exc
+
+
+async def text_to_speech(text: str) -> bytes:
+    """Convert text to speech via ElevenLabs. Returns MP3 bytes."""
+    if not ELEVENLABS_API_KEY or ELEVENLABS_API_KEY.startswith("your_"):
+        logger.warning("ElevenLabs API key not configured; returning empty audio for dev mode")
+        return b""
+
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            url,
+            json={
+                "text": text,
+                "model_id": "eleven_monolingual_v1",
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                },
+            },
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json",
+            },
+        )
+
+    if response.status_code == 401:
+        # Invalid/expired key — silently fall back to dev mode instead of crashing
+        logger.warning("ElevenLabs returned 401 (invalid key); returning empty audio for dev mode")
+        return b""
+
+    if response.status_code != 200:
+        logger.error("ElevenLabs API error: %s — %s", response.status_code, response.text[:300])
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"ElevenLabs TTS failed: {response.status_code}",
+        )
+
+    return response.content
 
 
 @router.post("/start", response_model=StartInterviewResponse)

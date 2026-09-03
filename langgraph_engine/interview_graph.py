@@ -29,6 +29,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langchain_openai import ChatOpenAI
+import dashscope
 
 try:
     from langgraph.checkpoint.postgres import PostgresSaver
@@ -97,6 +98,9 @@ class InterviewState(TypedDict, total=False):
 # --------------------------------------------------------------------------- LLM
 
 _model: Optional[ChatOpenAI] = None
+
+dashscope.base_http_api_url = os.getenv("DASHSCOPE_API_URL", "")
+dashscope.base_websocket_api_url = os.getenv("DASHSCOPE_WS_URL", "")
 
 
 from langchain_openai import ChatOpenAI
