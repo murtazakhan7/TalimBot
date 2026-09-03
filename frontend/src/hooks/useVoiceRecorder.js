@@ -177,9 +177,12 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
+  const [liveTranscript, setLiveTranscript] = useState('');
 
   const recognitionRef = useRef(null);
-  const transcriptRef = useRef('');
+  const accumulatedTranscriptRef = useRef('');
+  const isRecordingRef = useRef(false);
+  const timerFiredRef = useRef(false);
   const maxTimeTimerRef = useRef(null);
 
   // Check browser support on init
@@ -188,6 +191,48 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
     setError('Web Speech API not supported in this browser. Please use Chrome or Edge.');
   }
 
+  const submitTranscript = useCallback(async (transcript) => {
+    const trimmed = transcript.trim();
+    if (!trimmed) {
+      setError('No speech detected. Please try again.');
+      setIsProcessing(false);
+      return;
+    }
+
+    // Notify parent about captured transcript
+    if (onTranscriptCaptured) {
+      onTranscriptCaptured(trimmed);
+    }
+
+    try {
+      const response = await submitAnswerText(sessionId, trimmed);
+      const doneHeader = response.headers['x-interview-done'];
+      const questionText = response.headers['x-question-text'] || '';
+
+      // Check if interview is complete
+      if (doneHeader === 'true') {
+        // Response body is JSON with scores, but comes as Blob due to responseType
+        let json;
+        try {
+          const text = await response.data.text();  // Blob → string
+          json = JSON.parse(text);
+        } catch {
+          json = { done: true, scores: null };
+        }
+        onInterviewComplete(json.scores || {});
+      } else {
+        // Audio response — create blob URL and notify parent
+        const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        onQuestionReceived(audioUrl, questionText);
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || 'Failed to submit answer');
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [sessionId, onQuestionReceived, onInterviewComplete, onTranscriptCaptured]);
+
   const startRecording = useCallback(() => {
     if (!SpeechRecognition) {
       setError('Web Speech API not supported in this browser. Please use Chrome or Edge.');
@@ -195,20 +240,24 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
     }
 
     setError(null);
-    transcriptRef.current = '';
+    accumulatedTranscriptRef.current = '';
+    setLiveTranscript('');
+    isRecordingRef.current = true;
+    timerFiredRef.current = false;
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
     recognition.continuous = true;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
-    // Maximum recording time of 60 seconds
+    // Maximum recording time of 2 minutes
     maxTimeTimerRef.current = setTimeout(() => {
+      timerFiredRef.current = true;
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
-    }, 60000);
+    }, 120000);
 
     recognition.onstart = () => {
       setIsRecording(true);
@@ -216,59 +265,31 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
     };
 
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      transcriptRef.current = transcript;
-      setIsRecording(false);
-      setIsProcessing(true);
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          accumulatedTranscriptRef.current += t + ' ';
+        } else {
+          interim = t;
+        }
+      }
+      // Show live interim transcript to user
+      setLiveTranscript(accumulatedTranscriptRef.current + interim);
     };
 
-    recognition.onend = async () => {
-      // Clear the max time timer
-      if (maxTimeTimerRef.current) {
-        clearTimeout(maxTimeTimerRef.current);
-        maxTimeTimerRef.current = null;
-      }
-
-      setIsRecording(false);
-
-      const transcript = transcriptRef.current;
-      if (!transcript) {
-        setError('No speech detected. Please try again.');
-        setIsProcessing(false);
-        return;
-      }
-
-      // Notify parent about captured transcript
-      if (onTranscriptCaptured) {
-        onTranscriptCaptured(transcript);
-      }
-
-      try {
-        const response = await submitAnswerText(sessionId, transcript);
-        const doneHeader = response.headers['x-interview-done'];
-        const questionText = response.headers['x-question-text'] || '';
-
-        // Check if interview is complete
-        if (doneHeader === 'true') {
-          // Response body is JSON with scores, but comes as Blob due to responseType
-          let json;
-          try {
-            const text = await response.data.text();  // Blob → string
-            json = JSON.parse(text);
-          } catch {
-            json = { done: true, scores: null };
-          }
-          onInterviewComplete(json.scores || {});
-        } else {
-          // Audio response — create blob URL and notify parent
-          const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
-          const audioUrl = URL.createObjectURL(audioBlob);
-          onQuestionReceived(audioUrl, questionText);
+    recognition.onend = () => {
+      // Browser stopped — restart if user hasn't clicked stop and timer hasn't fired
+      if (isRecordingRef.current && !timerFiredRef.current) {
+        try {
+          recognition.start(); // restart to continue
+        } catch (err) {
+          // Recognition already started or other error — just proceed to submit
+          submitTranscript(accumulatedTranscriptRef.current);
         }
-      } catch (err) {
-        setError(err.response?.data?.detail || err.message || 'Failed to submit answer');
-      } finally {
-        setIsProcessing(false);
+      } else {
+        // Submit what we have
+        submitTranscript(accumulatedTranscriptRef.current);
       }
     };
 
@@ -279,13 +300,16 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
         maxTimeTimerRef.current = null;
       }
 
+      if (event.error === 'no-speech') {
+        // Ignore no-speech errors during continuous recording
+        return;
+      }
+
+      isRecordingRef.current = false;
       setIsRecording(false);
       setIsProcessing(false);
 
       switch (event.error) {
-        case 'no-speech':
-          setError('No speech detected. Please try again.');
-          break;
         case 'audio-capture':
           setError('No microphone found. Please check your microphone.');
           break;
@@ -299,19 +323,20 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [sessionId, onQuestionReceived, onInterviewComplete, onTranscriptCaptured]);
+  }, [submitTranscript]);
 
   const stopRecording = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-    // Clear the max time timer
+    isRecordingRef.current = false;
     if (maxTimeTimerRef.current) {
       clearTimeout(maxTimeTimerRef.current);
       maxTimeTimerRef.current = null;
     }
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
     setIsRecording(false);
+    setIsProcessing(true);
   }, []);
 
-  return { isRecording, isProcessing, startRecording, stopRecording, error };
+  return { isRecording, isProcessing, startRecording, stopRecording, error, liveTranscript };
 }

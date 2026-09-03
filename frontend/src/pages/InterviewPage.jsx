@@ -26,8 +26,7 @@ export default function InterviewPage() {
   const [totalDomains, setTotalDomains] = useState(parseInt(sessionStorage.getItem('total_domains') || '4'));
   const [domainsCovered, setDomainsCovered] = useState(parseInt(sessionStorage.getItem('domains_covered') || '0'));
   const [isPlaying, setIsPlaying] = useState(false);
-  const [lastTranscript, setLastTranscript] = useState('');
-  const [timeRemaining, setTimeRemaining] = useState(60);
+  const [timeRemaining, setTimeRemaining] = useState(120);
 
   // Check session validity on mount
   useEffect(() => {
@@ -39,7 +38,7 @@ export default function InterviewPage() {
   }, [navigate, sessionId]);
 
   // Voice recorder hook
-  const { isRecording, isProcessing, startRecording, stopRecording, error: recorderError } = useVoiceRecorder({
+  const { isRecording, isProcessing, startRecording, stopRecording, error: recorderError, liveTranscript } = useVoiceRecorder({
     sessionId,
     onQuestionReceived: (audioUrl, questionText, domain) => {
       setCurrentQuestion(questionText);
@@ -66,9 +65,6 @@ export default function InterviewPage() {
       sessionStorage.setItem('interview_scores', JSON.stringify(scores));
       navigate('/feedback');
     },
-    onTranscriptCaptured: (transcript) => {
-      setLastTranscript(transcript);
-    },
   });
 
   // Handle first question audio playback on mount
@@ -87,12 +83,11 @@ export default function InterviewPage() {
   // Timer countdown during recording
   useEffect(() => {
     if (isRecording) {
-      setTimeRemaining(60);
+      setTimeRemaining(120);
       const interval = setInterval(() => {
         setTimeRemaining(prev => {
           if (prev <= 1) {
             clearInterval(interval);
-            stopRecording();
             return 0;
           }
           return prev - 1;
@@ -100,9 +95,9 @@ export default function InterviewPage() {
       }, 1000);
       return () => clearInterval(interval);
     } else {
-      setTimeRemaining(60);
+      setTimeRemaining(120);
     }
-  }, [isRecording, stopRecording]);
+  }, [isRecording]);
 
   // Proctoring: track tab switches
   useEffect(() => {
@@ -137,7 +132,6 @@ export default function InterviewPage() {
     if (isRecording) {
       stopRecording();
     } else {
-      setLastTranscript(''); // Clear transcript when starting new recording
       startRecording();
     }
   }
@@ -169,10 +163,17 @@ export default function InterviewPage() {
   // Determine turn state
   const isCandidateTurn = !isPlaying && !isRecording && !isProcessing;
 
+  // Format time as M:SS
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   // Timer color
   const getTimerColor = () => {
-    if (timeRemaining > 30) return '#22c55e';
-    if (timeRemaining >= 10) return '#eab308';
+    if (timeRemaining > 60) return '#22c55e';
+    if (timeRemaining >= 30) return '#eab308';
     return '#ef4444';
   };
 
@@ -192,11 +193,6 @@ export default function InterviewPage() {
 
       {/* Main area */}
       <div style={styles.main}>
-        {/* Question display */}
-        <div style={styles.questionBox}>
-          <h2 style={styles.questionText}>{currentQuestion}</h2>
-        </div>
-
         {/* Turn indicator banner */}
         {isPlaying && (
           <div style={styles.turnBannerInterviewer}>
@@ -238,6 +234,12 @@ export default function InterviewPage() {
           </div>
         )}
 
+        {/* Question display */}
+        <div style={styles.questionCard}>
+          <div style={styles.questionLabel}>Interviewer's Question</div>
+          <h2 style={styles.questionText}>{currentQuestion}</h2>
+        </div>
+
         {/* Audio element (hidden, controlled programmatically) */}
         <audio
           ref={audioRef}
@@ -264,23 +266,23 @@ export default function InterviewPage() {
           {/* Timer */}
           {isRecording && (
             <div style={{ ...styles.timer, color: getTimerColor() }}>
-              {timeRemaining}s
+              {formatTime(timeRemaining)}
             </div>
           )}
 
           {/* Button label */}
           <div style={styles.buttonLabel}>
-            {isRecording ? 'Click to Stop' : isCandidateTurn ? 'Click to Answer' : 'Please Wait'}
+            {isRecording ? 'Tap to Stop' : isCandidateTurn ? 'Tap to Answer' : 'Please Wait'}
           </div>
-        </div>
 
-        {/* Transcript card */}
-        {lastTranscript && !isRecording && (
-          <div style={styles.transcriptCard}>
-            <div style={styles.transcriptLabel}>Your answer:</div>
-            <div style={styles.transcriptText}>"{lastTranscript}"</div>
-          </div>
-        )}
+          {/* Live transcript while recording */}
+          {isRecording && liveTranscript && (
+            <div style={styles.liveTranscript}>
+              {/* TODO: hide in production */}
+              <span style={styles.liveTranscriptLabel}>Hearing:</span> {liveTranscript}
+            </div>
+          )}
+        </div>
 
         {/* Recorder error */}
         {recorderError && (
@@ -338,52 +340,34 @@ const styles = {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    padding: '40px 20px',
-    gap: '24px',
-  },
-  questionBox: {
-    maxWidth: '700px',
-    width: '100%',
-    padding: '32px',
-    backgroundColor: '#1a1a1a',
-    borderRadius: '12px',
-    border: '1px solid #2a2a2a',
-  },
-  questionText: {
-    fontSize: '24px',
-    fontWeight: '500',
-    lineHeight: '1.5',
-    margin: 0,
-    textAlign: 'center',
+    padding: '32px 20px',
+    gap: '20px',
   },
   turnBannerInterviewer: {
-    maxWidth: '700px',
     width: '100%',
-    padding: '20px 24px',
+    padding: '12px 32px',
     backgroundColor: '#4c1d95',
-    borderRadius: '12px',
+    borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     gap: '16px',
     color: '#fff',
   },
   turnBannerCandidate: {
-    maxWidth: '700px',
     width: '100%',
-    padding: '20px 24px',
+    padding: '12px 32px',
     backgroundColor: '#14532d',
-    borderRadius: '12px',
+    borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     gap: '16px',
     color: '#fff',
   },
   turnBannerRecording: {
-    maxWidth: '700px',
     width: '100%',
-    padding: '20px 24px',
+    padding: '12px 32px',
     backgroundColor: '#7f1d1d',
-    borderRadius: '12px',
+    borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     gap: '16px',
@@ -391,34 +375,57 @@ const styles = {
     animation: 'pulse-red 2s ease-in-out infinite',
   },
   turnBannerProcessing: {
-    maxWidth: '700px',
     width: '100%',
-    padding: '20px 24px',
+    padding: '12px 32px',
     backgroundColor: '#1c1917',
-    borderRadius: '12px',
+    borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     gap: '16px',
     color: '#9ca3af',
   },
   turnBannerIcon: {
-    fontSize: '28px',
+    fontSize: '24px',
     flexShrink: 0,
   },
   turnBannerTitle: {
-    fontSize: '16px',
+    fontSize: '15px',
     fontWeight: '600',
   },
   turnBannerSubtitle: {
-    fontSize: '13px',
+    fontSize: '12px',
     opacity: 0.8,
-    marginTop: '4px',
+    marginTop: '2px',
+  },
+  questionCard: {
+    maxWidth: '700px',
+    width: '100%',
+    padding: '28px 32px',
+    backgroundColor: '#1a1a1a',
+    borderRadius: '12px',
+    border: '1px solid #2a2a2a',
+  },
+  questionLabel: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: '#c084fc',
+    textTransform: 'uppercase',
+    marginBottom: '12px',
+    letterSpacing: '0.5px',
+  },
+  questionText: {
+    fontSize: '22px',
+    fontWeight: '500',
+    lineHeight: '1.6',
+    margin: 0,
+    textAlign: 'center',
+    color: '#f0f0f0',
   },
   recordArea: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: '16px',
+    gap: '12px',
   },
   recordBtn: {
     width: '100px',
@@ -459,26 +466,24 @@ const styles = {
     color: '#9ca3af',
     fontWeight: '500',
   },
-  transcriptCard: {
+  liveTranscript: {
     maxWidth: '600px',
     width: '100%',
-    padding: '16px 20px',
+    padding: '12px 16px',
     backgroundColor: '#1a1a1a',
     borderRadius: '8px',
     border: '1px solid #2a2a2a',
-  },
-  transcriptLabel: {
-    fontSize: '12px',
-    fontWeight: '600',
+    fontSize: '13px',
     color: '#9ca3af',
-    textTransform: 'uppercase',
-    marginBottom: '8px',
-  },
-  transcriptText: {
-    fontSize: '14px',
-    color: '#d1d5db',
     fontStyle: 'italic',
     lineHeight: '1.5',
+    maxHeight: '3em',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  liveTranscriptLabel: {
+    fontWeight: '600',
+    color: '#6b7280',
   },
   error: {
     backgroundColor: '#7f1d1d',

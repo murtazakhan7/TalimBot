@@ -40,7 +40,7 @@ load_dotenv()
 
 logger = logging.getLogger("taleembot.interview_graph")
 
-MAX_FOLLOW_UPS = 3
+MAX_QUESTIONS = 10
 DEFAULT_DOMAINS = [
     "Technical Expertise",
     "Problem Solving",
@@ -178,6 +178,10 @@ def domain_extractor(state: InterviewState) -> dict:
 
 
 def question_generator(state: InterviewState) -> dict:
+    # First question is always an introduction
+    if not state.get("qa_pairs") and not state.get("domains_covered"):
+        return {"current_question": "To get us started, could you please introduce yourself and tell me a bit about your background?"}
+
     domains = state["domains"]
     index = min(state.get("current_domain_index", 0), len(domains) - 1)
     domain = domains[index]
@@ -197,8 +201,7 @@ def question_generator(state: InterviewState) -> dict:
         history = [p for p in state.get("qa_pairs", []) if p["domain"] == domain][-6:]
         transcript = "\n".join(f"Q: {p['question']}\nA: {p['answer']}" for p in history)
         human = (
-            f"You are in the '{domain}' domain, follow-up "
-            f"#{state.get('follow_up_count', 0) + 1} of {MAX_FOLLOW_UPS}, with {name}.\n"
+            f"You are in the '{domain}' domain with {name}.\n"
             f"Conversation so far in this domain:\n{transcript}\n\n"
             f"Ask ONE targeted follow-up to the candidate's last answer: probe for "
             f"concrete detail, challenge vague claims, or explore trade-offs. Do not "
@@ -230,19 +233,17 @@ def answer_recorder(state: InterviewState) -> dict:
 
 def coverage_tracker(state: InterviewState) -> dict:
     """Pure logic routing brain: no LLM call."""
+    total_questions = len(state.get("qa_pairs", []))
+    
+    # Check if we've reached max questions
+    if total_questions >= MAX_QUESTIONS:
+        return {"interview_complete": True}
+    
+    # Cycle through domains evenly using modulo
     domains = state["domains"]
-    index = min(state.get("current_domain_index", 0), len(domains) - 1)
-    domain = domains[index]
-    answered = sum(1 for p in state.get("qa_pairs", []) if p["domain"] == domain)
-    # The first Q&A in a domain is the opener; everything after is a follow-up.
-    follow_ups = max(0, answered - 1)
-    if follow_ups >= MAX_FOLLOW_UPS:
-        next_index = index + 1
-        updates: dict = {"follow_up_count": 0, "current_domain_index": next_index}
-        if next_index >= len(domains):
-            updates["interview_complete"] = True
-        return updates
-    return {"follow_up_count": follow_ups}
+    next_index = total_questions % len(domains)
+    
+    return {"current_domain_index": next_index}
 
 
 def route_after_coverage(state: InterviewState) -> str:
