@@ -1,3 +1,403 @@
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import Logo from '../components/Logo';
+
 export default function FeedbackPage() {
-  return <div>FeedbackPage</div>;
+  const navigate = useNavigate();
+
+  // Read scores from sessionStorage
+  const scoresRaw = sessionStorage.getItem('interview_scores');
+  
+  if (!scoresRaw) {
+    navigate('/upload');
+    return null;
+  }
+
+  let scores;
+  try {
+    scores = JSON.parse(scoresRaw);
+  } catch (err) {
+    console.error('Failed to parse interview scores:', err);
+    navigate('/upload');
+    return null;
+  }
+
+  // Reframe hire_recommendation as readiness level
+  function getReadinessLabel(recommendation) {
+    const map = {
+      'Strong hire': { label: 'Interview Ready', color: '#22c55e' },
+      'Hire': { label: 'Almost Ready', color: '#22c55e' },
+      'Lean hire': { label: 'Getting There', color: '#eab308' },
+      'No hire': { label: 'Needs Practice', color: '#f97316' },
+    };
+    return map[recommendation] || { label: 'Practice Complete', color: '#c084fc' };
+  }
+
+  const readiness = getReadinessLabel(scores.hire_recommendation);
+
+  // Motivational message based on score
+  function getMotivationalMessage(score) {
+    if (score >= 8) return "Excellent work! You're well prepared for real interviews.";
+    if (score >= 7) return "Great progress! A bit more practice and you'll be interview-ready.";
+    if (score >= 6) return "You're on the right track. Keep practising — you're making great progress!";
+    if (score >= 5) return "Good effort! Focus on the areas below and you'll see improvement.";
+    return "Keep going! Every practice session brings you closer to success.";
+  }
+
+  function handlePracticeAgain() {
+    // Clear all session data
+    sessionStorage.clear();
+    navigate('/upload');
+  }
+
+  return (
+    <div style={styles.container}>
+      {/* Top bar */}
+      <div style={styles.topBar}>
+        <Logo size={40} />
+        <button onClick={handlePracticeAgain} style={styles.practiceBtn}>
+          Practice Again
+        </button>
+      </div>
+
+      <div style={styles.content}>
+        {/* Hero section */}
+        <div style={styles.hero}>
+          <div style={styles.scoreCircle}>
+            <span style={styles.scoreValue}>{scores.overall_score?.toFixed(1) || 'N/A'}</span>
+            <span style={styles.scoreMax}>/ 10</span>
+          </div>
+          <div
+            style={{
+              ...styles.readinessBadge,
+              backgroundColor: readiness.color + '20',
+              border: `2px solid ${readiness.color}`,
+              color: readiness.color,
+            }}
+          >
+            {readiness.label}
+          </div>
+          <p style={styles.motivational}>{getMotivationalMessage(scores.overall_score)}</p>
+        </div>
+
+        {/* Domain breakdown */}
+        {scores.domain_scores && Object.keys(scores.domain_scores).length > 0 && (
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>Domain Breakdown</h2>
+            {Object.entries(scores.domain_scores).map(([domain, data]) => {
+              const score = data.score || 0;
+              const barColor = score >= 7 ? '#22c55e' : score >= 5 ? '#eab308' : '#ef4444';
+              
+              return (
+                <div key={domain} style={styles.domainCard}>
+                  <div style={styles.domainHeader}>
+                    <h3 style={styles.domainName}>{domain}</h3>
+                    <span style={styles.domainScore}>{score.toFixed(1)} / 10</span>
+                  </div>
+                  
+                  {/* Score bar */}
+                  <div style={styles.scoreBarContainer}>
+                    <div
+                      style={{
+                        ...styles.scoreBarFill,
+                        width: `${(score / 10) * 100}%`,
+                        backgroundColor: barColor,
+                      }}
+                    />
+                  </div>
+
+                  {/* Reasoning */}
+                  {data.reasoning && (
+                    <p style={styles.reasoning}>{data.reasoning}</p>
+                  )}
+
+                  {/* Strength and gap */}
+                  <div style={styles.domainDetails}>
+                    {data.strength && (
+                      <div style={styles.detailItem}>
+                        <span style={styles.detailLabel}>What you did well:</span>
+                        <p style={styles.detailText}>{data.strength}</p>
+                      </div>
+                    )}
+                    {data.gap && (
+                      <div style={styles.detailItem}>
+                        <span style={styles.detailLabel}>Focus on this:</span>
+                        <p style={styles.detailText}>{data.gap}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Overall assessment */}
+        {scores.summary_feedback && (
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>Overall Assessment</h2>
+            <p style={styles.summaryText}>{scores.summary_feedback}</p>
+          </div>
+        )}
+
+        {/* Coaching section */}
+        {scores.detailed_feedback && (
+          <div style={styles.coachingSection}>
+            <div style={styles.coachingColumn}>
+              <h3 style={styles.coachingTitle}>Your Strengths</h3>
+              {scores.detailed_feedback.strengths?.map((item, idx) => (
+                <div key={idx} style={styles.bulletPoint}>
+                  <span style={styles.bulletIcon}>✓</span>
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={styles.coachingColumn}>
+              <h3 style={styles.coachingTitle}>Work On These</h3>
+              {scores.detailed_feedback.improvements?.map((item, idx) => (
+                <div key={idx} style={styles.bulletPointOrange}>
+                  <span style={styles.bulletIconOrange}>→</span>
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Interview tips */}
+        {scores.detailed_feedback?.interview_tips && (
+          <div style={styles.tipsSection}>
+            <h2 style={styles.sectionTitle}>💡 Interview Tips</h2>
+            {scores.detailed_feedback.interview_tips.map((tip, idx) => (
+              <div key={idx} style={styles.tipItem}>
+                <span style={styles.tipIcon}>💡</span>
+                <span>{tip}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const styles = {
+  container: {
+    minHeight: '100vh',
+    backgroundColor: '#0f0f0f',
+    color: '#f0f0f0',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+  },
+  topBar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '16px 32px',
+    borderBottom: '1px solid #2a2a2a',
+  },
+  practiceBtn: {
+    padding: '10px 20px',
+    borderRadius: '6px',
+    border: '1px solid #c084fc',
+    backgroundColor: 'transparent',
+    color: '#c084fc',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '500',
+  },
+  content: {
+    maxWidth: '800px',
+    margin: '0 auto',
+    padding: '40px 20px',
+  },
+  hero: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '24px',
+    marginBottom: '48px',
+  },
+  scoreCircle: {
+    width: '160px',
+    height: '160px',
+    borderRadius: '50%',
+    border: '4px solid #c084fc',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1a1a',
+  },
+  scoreValue: {
+    fontSize: '48px',
+    fontWeight: '700',
+    color: '#c084fc',
+  },
+  scoreMax: {
+    fontSize: '16px',
+    color: '#9ca3af',
+  },
+  readinessBadge: {
+    padding: '8px 24px',
+    borderRadius: '20px',
+    fontSize: '16px',
+    fontWeight: '600',
+  },
+  motivational: {
+    fontSize: '18px',
+    color: '#9ca3af',
+    textAlign: 'center',
+    maxWidth: '600px',
+    lineHeight: '1.6',
+  },
+  section: {
+    marginBottom: '40px',
+  },
+  sectionTitle: {
+    fontSize: '24px',
+    fontWeight: '600',
+    marginBottom: '20px',
+    color: '#f0f0f0',
+  },
+  domainCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: '12px',
+    padding: '24px',
+    marginBottom: '16px',
+    border: '1px solid #2a2a2a',
+  },
+  domainHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '12px',
+  },
+  domainName: {
+    fontSize: '18px',
+    fontWeight: '600',
+    margin: 0,
+  },
+  domainScore: {
+    fontSize: '16px',
+    fontWeight: '600',
+    color: '#c084fc',
+  },
+  scoreBarContainer: {
+    width: '100%',
+    height: '8px',
+    backgroundColor: '#2a2a2a',
+    borderRadius: '4px',
+    overflow: 'hidden',
+    marginBottom: '16px',
+  },
+  scoreBarFill: {
+    height: '100%',
+    transition: 'width 0.3s ease',
+  },
+  reasoning: {
+    fontSize: '14px',
+    color: '#9ca3af',
+    lineHeight: '1.6',
+    marginBottom: '16px',
+  },
+  domainDetails: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  detailItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  detailLabel: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: '#c084fc',
+    textTransform: 'uppercase',
+  },
+  detailText: {
+    fontSize: '14px',
+    color: '#d1d5db',
+    lineHeight: '1.5',
+    margin: 0,
+  },
+  coachingSection: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '24px',
+    marginBottom: '40px',
+  },
+  coachingColumn: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: '12px',
+    padding: '24px',
+    border: '1px solid #2a2a2a',
+  },
+  coachingTitle: {
+    fontSize: '18px',
+    fontWeight: '600',
+    marginBottom: '16px',
+    marginTop: 0,
+  },
+  bulletPoint: {
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'flex-start',
+    marginBottom: '12px',
+    fontSize: '14px',
+    color: '#bbf7d0',
+    lineHeight: '1.5',
+  },
+  bulletIcon: {
+    color: '#22c55e',
+    fontWeight: '700',
+    flexShrink: 0,
+  },
+  bulletPointOrange: {
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'flex-start',
+    marginBottom: '12px',
+    fontSize: '14px',
+    color: '#fed7aa',
+    lineHeight: '1.5',
+  },
+  bulletIconOrange: {
+    color: '#f97316',
+    fontWeight: '700',
+    flexShrink: 0,
+  },
+  tipsSection: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: '12px',
+    padding: '24px',
+    border: '1px solid #2a2a2a',
+  },
+  tipItem: {
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'flex-start',
+    marginBottom: '16px',
+    fontSize: '14px',
+    color: '#d1d5db',
+    lineHeight: '1.5',
+  },
+  tipIcon: {
+    flexShrink: 0,
+  },
+  summaryText: {
+    fontSize: '16px',
+    lineHeight: '1.7',
+    color: '#d1d5db',
+  },
+};
+
+// Responsive adjustments
+if (typeof window !== 'undefined') {
+  const mediaQuery = window.matchMedia('(max-width: 768px)');
+  if (mediaQuery.matches) {
+    styles.coachingSection.gridTemplateColumns = '1fr';
+  }
 }

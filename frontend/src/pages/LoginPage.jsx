@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loginUser, registerUser } from '../api/client';
+import Logo from '../components/Logo';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -66,7 +67,7 @@ export default function LoginPage() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        <h1 style={styles.title}>TaleemBot</h1>
+        <Logo size={48} />
 
         {/* Tab switcher */}
         <div style={styles.tabs}>
@@ -186,13 +187,6 @@ const styles = {
     borderRadius: '12px',
     padding: '32px',
     boxShadow: '0 4px 20px rgba(0, 0, 0, 0.5)',
-  },
-  title: {
-    fontSize: '32px',
-    fontWeight: '600',
-    textAlign: 'center',
-    margin: '0 0 24px 0',
-    color: '#c084fc',
   },
   tabs: {
     display: 'flex',

@@ -2,23 +2,22 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useVoiceRecorder from '../hooks/useVoiceRecorder';
 import { logProctorEvent } from '../api/client';
+import Logo from '../components/Logo';
 
 export default function InterviewPage() {
   const navigate = useNavigate();
   const audioRef = useRef(null);
   const interviewStartRef = useRef(Date.now());
   const proctorTimerRef = useRef(null);
+  const domainsSeenRef = useRef(new Set());
 
   // Read session data
   const sessionId = sessionStorage.getItem('session_id');
   const initialQuestionText = sessionStorage.getItem('question_text') || '';
   const initialAudioBase64 = sessionStorage.getItem('audio_base64') || '';
 
-  // Redirect if no session
-  if (!sessionId) {
-    navigate('/upload');
-    return null;
-  }
+  // State for readiness check
+  const [isReady, setIsReady] = useState(false);
 
   // State
   const [currentQuestion, setCurrentQuestion] = useState(initialQuestionText);
@@ -29,14 +28,31 @@ export default function InterviewPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [statusText, setStatusText] = useState('Interviewer speaking...');
 
+  // Check session validity on mount
+  useEffect(() => {
+    if (!sessionId) {
+      navigate('/upload');
+    } else {
+      setIsReady(true);
+    }
+  }, [navigate, sessionId]);
+
   // Voice recorder hook
   const { isRecording, isProcessing, startRecording, stopRecording, error: recorderError } = useVoiceRecorder({
     sessionId,
     onQuestionReceived: (audioUrl, questionText, domain) => {
       setCurrentQuestion(questionText);
+      
+      // Increment question counter
+      setQuestionNumber(prev => prev + 1);
+      
       if (domain) {
         setCurrentDomain(domain);
         sessionStorage.setItem('current_domain', domain);
+        
+        // Track unique domains seen
+        domainsSeenRef.current.add(domain);
+        setDomainsCovered(domainsSeenRef.current.size);
       }
 
       // Play the audio
@@ -71,6 +87,8 @@ export default function InterviewPage() {
 
   // Proctoring: track tab switches
   useEffect(() => {
+    if (!isReady) return;
+
     function handleVisibilityChange() {
       const elapsed = Math.floor((Date.now() - interviewStartRef.current) / 1000);
       if (document.hidden) {
@@ -94,7 +112,7 @@ export default function InterviewPage() {
         clearInterval(proctorTimerRef.current);
       }
     };
-  }, [sessionId]);
+  }, [sessionId, isReady]);
 
   // Update status based on state
   useEffect(() => {
@@ -143,11 +161,16 @@ export default function InterviewPage() {
     return new Blob(byteArrays, { type: mimeType });
   }
 
+  // Don't render until session is validated
+  if (!isReady) {
+    return null;
+  }
+
   return (
     <div style={styles.container}>
       {/* Top bar */}
       <div style={styles.topBar}>
-        <h2 style={styles.logo}>TaleemBot</h2>
+        <Logo size={40} />
         <div style={styles.badge}>{currentDomain}</div>
         <div style={styles.counter}>Q {questionNumber}/{totalDomains * 4}</div>
       </div>
@@ -223,12 +246,6 @@ const styles = {
     alignItems: 'center',
     padding: '16px 32px',
     borderBottom: '1px solid #2a2a2a',
-  },
-  logo: {
-    fontSize: '24px',
-    fontWeight: '600',
-    margin: 0,
-    color: '#c084fc',
   },
   badge: {
     backgroundColor: '#c084fc',

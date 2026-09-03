@@ -122,10 +122,11 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
 
           // Check if interview is complete
           if (doneHeader === 'true' || response.data?.done === true) {
-            // Response body is JSON with scores
+            // Response body is JSON with scores, but comes as Blob due to responseType
             let json;
             try {
-              json = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+              const text = await response.data.text();  // Blob → string
+              json = JSON.parse(text);
             } catch {
               json = { done: true, scores: null };
             }

@@ -53,6 +53,13 @@ export async function parseCV(file) {
   return res.data; // { text, page_count, char_count }
 }
 
+export async function parseJD(file) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await client.post('/docs/parse-jd', form);
+  return res.data; // { text, page_count, char_count }
+}
+
 export async function parseJDText(text) {
   const res = await client.post('/docs/parse-jd-text', { text });
   return res.data; // { text, page_count, char_count }

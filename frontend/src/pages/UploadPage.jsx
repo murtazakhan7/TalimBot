@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { parseCV, parseJDText, startInterview } from '../api/client';
+import { parseCV, parseJD, parseJDText, startInterview } from '../api/client';
+import Logo from '../components/Logo';
 
 export default function UploadPage() {
   const navigate = useNavigate();
@@ -13,6 +14,7 @@ export default function UploadPage() {
   const [jdCharCount, setJdCharCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [loadingMessage, setLoadingMessage] = useState('Reading your CV...');
 
   // JD input mode: 'file' or 'text'
   const [jdMode, setJdMode] = useState('text');
@@ -24,6 +26,27 @@ export default function UploadPage() {
       navigate('/login');
     }
   }, [navigate]);
+
+  // Rotate loading messages during interview start
+  useEffect(() => {
+    if (!loading) return;
+
+    const messages = [
+      'Reading your CV...',
+      'Analysing the job description...',
+      'Identifying key skill domains...',
+      'Preparing your first question...',
+      'Almost ready...',
+    ];
+
+    let index = 0;
+    const interval = setInterval(() => {
+      index = (index + 1) % messages.length;
+      setLoadingMessage(messages[index]);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [loading]);
 
   async function handleCVUpload(file) {
     setLoading(true);
@@ -47,24 +70,11 @@ export default function UploadPage() {
     setError('');
 
     try {
-      // Reuse parseCV endpoint for JD PDFs (same backend handler)
-      const form = new FormData();
-      form.append('file', file);
-      const res = await fetch('http://localhost:8000/docs/parse-jd', {
-        method: 'POST',
-        body: form,
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Failed to parse JD');
-      }
-
-      const data = await res.json();
+      const data = await parseJD(file);
       setJdText(data.text);
       setJdCharCount(data.char_count || data.text.length);
     } catch (err) {
-      setError(err.message || 'Failed to parse JD. Please upload a valid PDF.');
+      setError(err.response?.data?.detail || 'Failed to parse JD. Please upload a valid PDF.');
       setJdText('');
       setJdCharCount(0);
     } finally {
@@ -97,6 +107,7 @@ export default function UploadPage() {
 
     setLoading(true);
     setError('');
+    setLoadingMessage('Reading your CV...');
 
     try {
       const data = await startInterview(candidateName, cvText, jdText);
@@ -116,11 +127,23 @@ export default function UploadPage() {
     navigate('/login');
   }
 
+  // Loading screen overlay
+  if (loading && candidateName && cvText && jdText) {
+    return (
+      <div style={styles.loadingContainer}>
+        <Logo size={60} />
+        <div style={styles.spinner} />
+        <h2 style={styles.loadingMessage}>{loadingMessage}</h2>
+        <p style={styles.loadingNote}>This usually takes 15–30 seconds</p>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.container}>
       {/* Top bar */}
       <div style={styles.topBar}>
-        <h2 style={styles.logo}>TaleemBot</h2>
+        <Logo size={40} />
         <button onClick={handleLogout} style={styles.logoutBtn}>
           Logout
         </button>
@@ -261,12 +284,6 @@ const styles = {
     padding: '16px 32px',
     borderBottom: '1px solid #2a2a2a',
   },
-  logo: {
-    fontSize: '24px',
-    fontWeight: '600',
-    margin: 0,
-    color: '#c084fc',
-  },
   logoutBtn: {
     padding: '8px 16px',
     borderRadius: '6px',
@@ -395,4 +412,46 @@ const styles = {
     cursor: 'pointer',
     marginTop: '16px',
   },
+  loadingContainer: {
+    minHeight: '100vh',
+    backgroundColor: '#0f0f0f',
+    color: '#f0f0f0',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '32px',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+  },
+  spinner: {
+    width: '48px',
+    height: '48px',
+    border: '4px solid #2a2a2a',
+    borderTop: '4px solid #c084fc',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
+  },
+  loadingMessage: {
+    fontSize: '20px',
+    fontWeight: '500',
+    color: '#f0f0f0',
+    margin: 0,
+  },
+  loadingNote: {
+    fontSize: '14px',
+    color: '#9ca3af',
+    margin: 0,
+  },
 };
+
+// Add keyframe animation for spinner
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  `;
+  document.head.appendChild(style);
+}
