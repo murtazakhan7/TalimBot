@@ -24,10 +24,11 @@ import os
 from typing import Annotated, Any, Optional, TypedDict
 
 from dotenv import load_dotenv
-from langchain_community.chat_models.tongyi import ChatTongyi
+# from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from langchain_openai import ChatOpenAI
 
 try:
     from langgraph.checkpoint.postgres import PostgresSaver
@@ -95,13 +96,19 @@ class InterviewState(TypedDict, total=False):
 
 # --------------------------------------------------------------------------- LLM
 
-_model: Optional[ChatTongyi] = None
+_model: Optional[ChatOpenAI] = None
 
 
-def get_llm() -> ChatTongyi:
+from langchain_openai import ChatOpenAI
+
+def get_llm():
     global _model
     if _model is None:
-        _model = ChatTongyi(model=os.getenv("QWEN_MODEL", "qwen-max"))
+        _model = ChatOpenAI(
+            model=os.getenv("QWEN_MODEL", "qwen3.6-plus"),
+            api_key=os.getenv("DASHSCOPE_API_KEY"),
+            base_url=os.getenv("DASHSCOPE_BASE_URL"),
+        )
     return _model
 
 
