@@ -185,12 +185,6 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
   const timerFiredRef = useRef(false);
   const maxTimeTimerRef = useRef(null);
 
-  // Check browser support on init
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    setError('Web Speech API not supported in this browser. Please use Chrome or Edge.');
-  }
-
   const submitTranscript = useCallback(async (transcript) => {
     const trimmed = transcript.trim();
     if (!trimmed) {
@@ -234,8 +228,9 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
   }, [sessionId, onQuestionReceived, onInterviewComplete, onTranscriptCaptured]);
 
   const startRecording = useCallback(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setError('Web Speech API not supported in this browser. Please use Chrome or Edge.');
+      setError('Web Speech API not supported. Please use Chrome or Edge.');
       return;
     }
 
