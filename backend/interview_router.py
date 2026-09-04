@@ -4,14 +4,11 @@ import asyncio
 import base64
 import logging
 import os
-import tempfile
 import unicodedata
 import uuid
 from typing import Annotated, Optional
 
-import dashscope
-from dashscope.audio.asr import Recognition
-from dashscope.audio.tts_v2 import SpeechSynthesizer
+from deepgram import DeepgramClient, PrerecordedOptions
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import JSONResponse
@@ -35,9 +32,9 @@ logger = logging.getLogger("taleembot.interview")
 router = APIRouter(prefix="/interview", tags=["interview"])
 
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-STT_MODEL = os.getenv("STT_MODEL", "qwen3-asr-flash-2025-09-08")
 TTS_MODEL = os.getenv("TTS_MODEL", "cosyvoice-v3-flash")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 
@@ -69,13 +66,13 @@ async def submit_answer_text(
     body: TextAnswerBody,
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Accept transcript text directly instead of audio. Used by Web Speech API frontend."""
+    """Accept transcript text directly instead of audio. Fallback path for manual text entry."""
     transcript = body.transcript.strip()
     if not transcript:
         raise HTTPException(status_code=400, detail="Transcript cannot be empty")
 
     session = InterviewSession(session_id=session_id)
-    result = session.submit_answer(transcript)
+    result = await asyncio.to_thread(session.submit_answer, transcript)
 
     if result.get("interview_complete"):
         try:
@@ -96,83 +93,48 @@ async def submit_answer_text(
     headers = {
         "X-Question-Text": sanitize_header(question_text),
         "X-Interview-Done": "false",
+        "X-Current-Domain": sanitize_header(result.get("current_domain") or ""),
     }
     return Response(content=audio_bytes, media_type="audio/mpeg", headers=headers)
 
 
-async def transcribe_audio(audio_bytes: bytes, filename: str) -> str:
-    """Send audio to DashScope ASR API and return transcript text."""
-    if not DASHSCOPE_API_KEY:
+async def transcribe_audio(audio_bytes: bytes, mimetype: str = "audio/webm") -> str:
+    """Transcribe audio via Deepgram Nova-3 and return transcript text."""
+    if not DEEPGRAM_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="DashScope API key is not configured",
+            detail="Deepgram API key is not configured",
         )
 
-    dashscope.api_key = DASHSCOPE_API_KEY
-
-    # Write audio bytes to a temp file — DashScope ASR requires a file path
-    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
+    deepgram = DeepgramClient(DEEPGRAM_API_KEY)
+    payload = {"buffer": audio_bytes, "mimetype": mimetype}
+    options = PrerecordedOptions(
+        model="nova-3",
+        smart_format=True,
+        punctuate=True,
+        filler_words=False,
+        utterances=False,
+    )
 
     try:
-        response = Recognition(
-            model=STT_MODEL,
-            format="webm",
-            sample_rate=16000,
-            language_hints=["en"],
-        ).call(tmp_path)
+        response = await deepgram.listen.asyncrest.v("1").transcribe_file(payload, options)
+    except Exception as exc:
+        logger.error("Deepgram ASR error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"ASR failed: {exc}",
+        ) from exc
 
-        if response.status_code == 200:
-            sentences = response.output.get("sentence", [])
-            transcript = " ".join(s.get("text", "") for s in sentences).strip()
-            return transcript or ""
-        else:
-            logger.error("DashScope ASR error: %s — %s", response.code, response.message)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"ASR failed: {response.code} — {response.message}",
-            )
-    finally:
-        os.unlink(tmp_path)
+    transcript = response.results.channels[0].alternatives[0].transcript
+    transcript = (transcript or "").strip()
 
+    if not transcript:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No speech detected. Please try again.",
+        )
 
-# --- OLD WHISPER CODE (commented out for quick revert) ---
-# async def transcribe_audio(audio_bytes: bytes, filename: str) -> str:
-#     """Send audio to OpenAI Whisper API and return transcript text."""
-#     if not OPENAI_API_KEY:
-#         raise HTTPException(
-#             status_code=status.HTTP_502_BAD_GATEWAY,
-#             detail="OpenAI API key is not configured",
-#         )
-#
-#     async with httpx.AsyncClient(timeout=30.0) as client:
-#         files = {
-#             "file": (filename, audio_bytes, "audio/webm"),
-#         }
-#         data = {
-#             "model": "whisper-1",
-#             "language": "en",
-#             "response_format": "text",
-#         }
-#         headers = {
-#             "Authorization": f"Bearer {OPENAI_API_KEY}",
-#         }
-#         response = await client.post(
-#             "https://api.openai.com/v1/audio/transcriptions",
-#             files=files,
-#             data=data,
-#             headers=headers,
-#         )
-#
-#     if response.status_code != 200:
-#         logger.error("Whisper API error: %s — %s", response.status_code, response.text[:300])
-#         raise HTTPException(
-#             status_code=status.HTTP_502_BAD_GATEWAY,
-#             detail=f"Whisper transcription failed: {response.status_code}",
-#         )
-#
-#     return response.text.strip()
+    return transcript
 
 
 # --- DASHSCOPE TTS CODE (commented out for quick revert) ---
@@ -319,13 +281,13 @@ async def submit_answer(
 
     audio_bytes = await file.read()
 
-    # Transcribe via Whisper
-    transcript = await transcribe_audio(audio_bytes, file.filename)
+    # Transcribe via Deepgram Nova-3
+    transcript = await transcribe_audio(audio_bytes, file.content_type or "audio/webm")
     logger.info("Transcript for session %s: %s", session_id, transcript[:100])
 
-    # Run LangGraph turn
+    # Run LangGraph turn (blocking LLM calls → keep them off the event loop)
     session = InterviewSession(session_id=session_id)
-    result = session.submit_answer(transcript)
+    result = await asyncio.to_thread(session.submit_answer, transcript)
 
     # If interview is complete, persist scores and Q&A pairs, return final result
     if result.get("interview_complete"):
@@ -356,6 +318,7 @@ async def submit_answer(
     headers = {
         "X-Question-Text": sanitize_header(question_text),
         "X-Interview-Done": "false",
+        "X-Current-Domain": sanitize_header(result.get("current_domain") or ""),
     }
 
     return Response(

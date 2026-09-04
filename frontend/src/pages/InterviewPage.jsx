@@ -38,7 +38,7 @@ export default function InterviewPage() {
   }, [navigate, sessionId]);
 
   // Voice recorder hook
-  const { isRecording, isProcessing, startRecording, stopRecording, error: recorderError, liveTranscript } = useVoiceRecorder({
+  const { isRecording, isProcessing, startRecording, stopRecording, error: recorderError } = useVoiceRecorder({
     sessionId,
     onQuestionReceived: (audioUrl, questionText, domain) => {
       setCurrentQuestion(questionText);
@@ -273,7 +273,7 @@ export default function InterviewPage() {
           <div style={styles.turnBannerProcessing}>
             <div style={styles.turnBannerIcon}>⏳</div>
             <div>
-              <div style={styles.turnBannerTitle}>Processing your answer...</div>
+              <div style={styles.turnBannerTitle}>Transcribing your answer...</div>
               <div style={styles.turnBannerSubtitle}>Preparing next question</div>
             </div>
           </div>
@@ -342,13 +342,6 @@ export default function InterviewPage() {
               <div style={styles.micMeterTrack}>
                 <div ref={micLevelRef} style={styles.micMeterFill} />
               </div>
-            </div>
-          )}
-
-          {/* Live transcript while recording */}
-          {isRecording && liveTranscript && (
-            <div style={styles.liveTranscript}>
-              <span style={styles.liveTranscriptLabel}>Hearing:</span> {liveTranscript}
             </div>
           )}
         </div>
@@ -602,25 +595,6 @@ const styles = {
     color: '#64748b',
     fontSize: '13px',
     cursor: 'pointer',
-  },
-  liveTranscript: {
-    maxWidth: '600px',
-    width: '100%',
-    padding: '12px 16px',
-    backgroundColor: '#13131f',
-    borderRadius: '8px',
-    border: '1px solid #1e1e35',
-    fontSize: '13px',
-    color: '#64748b',
-    fontStyle: 'italic',
-    lineHeight: '1.5',
-    maxHeight: '3em',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  liveTranscriptLabel: {
-    fontWeight: '600',
-    color: '#475569',
   },
   error: {
     backgroundColor: '#450a0a',

@@ -1,167 +1,120 @@
 import { useCallback, useRef, useState } from 'react';
-import { submitAnswerText } from '../api/client';
+import { submitAnswer } from '../api/client';
 
-export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInterviewComplete, onTranscriptCaptured }) {
+const MIN_RECORDING_MS = 1500;
+const CHUNK_INTERVAL_MS = 100;
+const MAX_RECORDING_MS = 120000;
+
+export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInterviewComplete }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
-  const [liveTranscript, setLiveTranscript] = useState('');
 
-  const recognitionRef = useRef(null);
-  const accumulatedTranscriptRef = useRef('');
-  const isRecordingRef = useRef(false);
-  const timerFiredRef = useRef(false);
+  const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const chunksRef = useRef([]);
+  const recordingStartRef = useRef(0);
   const maxTimeTimerRef = useRef(null);
 
-  const submitTranscript = useCallback(async (transcript) => {
-    const trimmed = transcript.trim();
-    if (!trimmed) {
-      setError('No speech detected. Please try again.');
-      setIsProcessing(false);
-      return;
-    }
-
-    // Notify parent about captured transcript
-    if (onTranscriptCaptured) {
-      onTranscriptCaptured(trimmed);
-    }
-
-    try {
-      const response = await submitAnswerText(sessionId, trimmed);
-      const doneHeader = response.headers['x-interview-done'];
-      const questionText = response.headers['x-question-text'] || '';
-      const domainText = response.headers['x-current-domain'] || '';
-
-      // Check if interview is complete
-      if (doneHeader === 'true') {
-        // Response body is JSON with scores, but comes as Blob due to responseType
-        let json;
-        try {
-          const text = await response.data.text();  // Blob → string
-          json = JSON.parse(text);
-        } catch {
-          json = { done: true, scores: null };
-        }
-        onInterviewComplete(json.scores || {});
-      } else {
-        // Audio response — create blob URL and notify parent
-        const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        onQuestionReceived(audioUrl, questionText, domainText);
-      }
-    } catch (err) {
-      setError(err.response?.data?.detail || err.message || 'Failed to submit answer');
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [sessionId, onQuestionReceived, onInterviewComplete, onTranscriptCaptured]);
-
-  const startRecording = useCallback(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError('Web Speech API not supported. Please use Chrome or Edge.');
-      return;
-    }
-
-    setError(null);
-    accumulatedTranscriptRef.current = '';
-    setLiveTranscript('');
-    isRecordingRef.current = true;
-    timerFiredRef.current = false;
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-
-    // Maximum recording time of 2 minutes
-    maxTimeTimerRef.current = setTimeout(() => {
-      timerFiredRef.current = true;
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-    }, 120000);
-
-    recognition.onstart = () => {
-      setIsRecording(true);
-      setIsProcessing(false);
-    };
-
-    recognition.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          accumulatedTranscriptRef.current += t + ' ';
-        } else {
-          interim = t;
-        }
-      }
-      // Show live interim transcript to user
-      setLiveTranscript(accumulatedTranscriptRef.current + interim);
-    };
-
-    recognition.onend = () => {
-      // Browser stopped — restart if user hasn't clicked stop and timer hasn't fired
-      if (isRecordingRef.current && !timerFiredRef.current) {
-        try {
-          recognition.start(); // restart to continue
-        } catch (err) {
-          // Recognition already started or other error — just proceed to submit
-          submitTranscript(accumulatedTranscriptRef.current);
-        }
-      } else {
-        // Submit what we have
-        submitTranscript(accumulatedTranscriptRef.current);
-      }
-    };
-
-    recognition.onerror = (event) => {
-      if (event.error === 'no-speech') {
-        // Transient — onend will restart recognition. Keep the max-time timer
-        // running so the cumulative 2-minute cap is preserved across restarts.
-        return;
-      }
-
-      // Fatal — clear the max time timer and stop for good
-      if (maxTimeTimerRef.current) {
-        clearTimeout(maxTimeTimerRef.current);
-        maxTimeTimerRef.current = null;
-      }
-
-      isRecordingRef.current = false;
-      setIsRecording(false);
-      setIsProcessing(false);
-
-      switch (event.error) {
-        case 'audio-capture':
-          setError('No microphone found. Please check your microphone.');
-          break;
-        case 'not-allowed':
-          setError('Microphone permission denied. Please allow microphone access.');
-          break;
-        default:
-          setError(`Speech recognition error: ${event.error}`);
-      }
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [submitTranscript]);
-
-  const stopRecording = useCallback(() => {
-    isRecordingRef.current = false;
+  const cleanup = useCallback(() => {
     if (maxTimeTimerRef.current) {
       clearTimeout(maxTimeTimerRef.current);
       maxTimeTimerRef.current = null;
     }
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
-    setIsRecording(false);
-    setIsProcessing(true);
+    mediaRecorderRef.current = null;
   }, []);
 
-  return { isRecording, isProcessing, startRecording, stopRecording, error, liveTranscript };
+  const stopRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+    setIsRecording(false);
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    setError(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = recorder;
+      chunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        chunksRef.current = [];
+        const elapsed = Date.now() - recordingStartRef.current;
+        cleanup();
+
+        setIsProcessing(true);
+
+        if (blob.size < 100 || elapsed < MIN_RECORDING_MS) {
+          setError('Recording too short — please speak clearly');
+          setIsProcessing(false);
+          return;
+        }
+
+        try {
+          const response = await submitAnswer(sessionId, blob);
+          const doneHeader = response.headers['x-interview-done'];
+          const questionText = response.headers['x-question-text'] || '';
+          const domainText = response.headers['x-current-domain'] || '';
+
+          if (doneHeader === 'true') {
+            // Scores arrive as JSON but the axios client reads every answer as a Blob
+            let json;
+            try {
+              const text = await response.data.text();
+              json = JSON.parse(text);
+            } catch {
+              json = { done: true, scores: null };
+            }
+            onInterviewComplete(json.scores || {});
+          } else {
+            const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            onQuestionReceived(audioUrl, questionText, domainText);
+          }
+        } catch (err) {
+          if (err.response?.status === 400) {
+            // No speech detected server-side — no LangGraph turn was run,
+            // so the next question must come from a fresh recording.
+            setError('No speech detected. Please try again.');
+          } else {
+            setError(err.response?.data?.detail || err.message || 'Failed to submit answer');
+          }
+        } finally {
+          setIsProcessing(false);
+        }
+      };
+
+      // Hard 2-minute cap — the candidate controls every other stop
+      maxTimeTimerRef.current = setTimeout(() => stopRecording(), MAX_RECORDING_MS);
+
+      recorder.start(CHUNK_INTERVAL_MS);
+      recordingStartRef.current = Date.now();
+      setIsRecording(true);
+      setIsProcessing(false);
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setError('Microphone access denied. Please allow microphone permissions and try again.');
+      } else {
+        setError(err.message || 'Failed to start recording');
+      }
+      cleanup();
+    }
+  }, [sessionId, onQuestionReceived, onInterviewComplete, stopRecording, cleanup]);
+
+  return { isRecording, isProcessing, startRecording, stopRecording, error };
 }

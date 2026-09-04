@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="TaleemBot API",
+    title="TalimBot API",
     description="AI-powered structured voice interview platform",
     version="1.0.0",
     lifespan=lifespan,
@@ -36,7 +36,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Question-Text", "X-Interview-Done"],
+    expose_headers=["X-Question-Text", "X-Interview-Done", "X-Current-Domain"],
 )
 
 # Register routers
@@ -48,4 +48,4 @@ app.include_router(proctor_router)
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "TaleemBot API"}
+    return {"status": "ok", "service": "TalimBot API"}
