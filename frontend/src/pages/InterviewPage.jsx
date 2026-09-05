@@ -231,6 +231,7 @@ export default function InterviewPage() {
       setCurrentQuestion(data.rephrased_question);
     } catch (err) {
       console.error('Paraphrase failed:', err);
+      setError('Could not rephrase question. Please try again.');
     } finally {
       setIsParaphrasing(false);
     }
