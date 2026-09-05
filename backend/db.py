@@ -1,4 +1,4 @@
-"""SQLAlchemy async ORM models and database helpers for TaleemBot."""
+"""SQLAlchemy async ORM models and database helpers for TalimBot."""
 
 from __future__ import annotations
 
@@ -63,6 +63,10 @@ class Interview(Base):
     cv_text: Mapped[str] = mapped_column(Text)
     jd_text: Mapped[str] = mapped_column(Text)
     domains: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    job_title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    parent_interview_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("interviews.id", ondelete="SET NULL"), nullable=True
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_complete: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -129,13 +133,22 @@ async def create_tables() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def save_session_to_db(session_id: str, user_id: Any, cv_text: str, jd_text: str) -> Interview:
+async def save_session_to_db(
+    session_id: str,
+    user_id: Any,
+    cv_text: str,
+    jd_text: str,
+    job_title: Optional[str] = None,
+    parent_interview_id: Any = None,
+) -> Interview:
     async with AsyncSessionLocal() as session:
         interview = Interview(
             session_id=session_id,
             user_id=_as_uuid(user_id),
             cv_text=cv_text,
             jd_text=jd_text,
+            job_title=job_title,
+            parent_interview_id=_as_uuid(parent_interview_id) if parent_interview_id else None,
         )
         session.add(interview)
         await session.commit()

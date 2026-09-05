@@ -10,7 +10,7 @@ from backend.auth_router import get_current_user
 from backend.db import User
 from langgraph_engine.interview_graph import InterviewSession
 
-logger = logging.getLogger("taleembot.proctor")
+logger = logging.getLogger("talimbot.proctor")
 
 router = APIRouter(prefix="/proctor", tags=["proctor"])
 

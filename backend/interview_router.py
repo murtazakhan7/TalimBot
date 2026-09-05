@@ -15,19 +15,21 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from backend.auth_router import get_current_user
 from backend.db import (
     Interview,
+    Score,
     User,
     get_db,
     save_qa_pairs_to_db,
     save_scores_to_db,
     save_session_to_db,
 )
-from langgraph_engine.interview_graph import INTRO_QUESTION, InterviewSession
+from langgraph_engine.interview_graph import INTRO_QUESTION, InterviewSession, extract_job_title
 
-logger = logging.getLogger("taleembot.interview")
+logger = logging.getLogger("talimbot.interview")
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
@@ -48,6 +50,8 @@ class StartInterviewBody(BaseModel):
     candidate_name: str
     cv_text: str
     jd_text: str
+    parent_interview_id: Optional[str] = None
+    job_title: Optional[str] = None
 
 
 class StartInterviewResponse(BaseModel):
@@ -209,6 +213,36 @@ async def text_to_speech(text: str) -> bytes:
     return response.content
 
 
+async def _resolve_parent_interview(db: AsyncSession, value: str, user_id) -> uuid.UUID:
+    """Resolve a parent attempt to an interviews.id.
+
+    The frontend only has session_id in sessionStorage, so accept either that or a
+    row id. Scoped to the caller so a session can't be linked to someone else's interview.
+    """
+    try:
+        candidate_id: Optional[uuid.UUID] = uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        candidate_id = None
+
+    if candidate_id is not None:
+        found = (
+            await db.execute(
+                select(Interview.id).where(Interview.id == candidate_id, Interview.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if found is not None:
+            return found
+
+    found = (
+        await db.execute(
+            select(Interview.id).where(Interview.session_id == value, Interview.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent interview not found")
+    return found
+
+
 @router.post("/start", response_model=StartInterviewResponse)
 async def start_interview(
     body: StartInterviewBody,
@@ -220,9 +254,15 @@ async def start_interview(
     session_id = str(uuid.uuid4())
     session = InterviewSession(session_id=session_id)
 
-    # The intro question is hardcoded, so its TTS doesn't depend on the graph —
-    # run them concurrently. to_thread keeps the sync LangGraph call off the loop.
-    result, intro_audio = await asyncio.gather(
+    # Resolve the parent link first so a bad id fails before spending LLM + TTS calls
+    parent_id = None
+    if body.parent_interview_id:
+        parent_id = await _resolve_parent_interview(db, body.parent_interview_id, current_user.id)
+
+    # The intro question is hardcoded and the job title only needs the JD, so neither
+    # depends on the graph — run all three concurrently. to_thread keeps the sync
+    # LangGraph and LLM calls off the event loop.
+    result, intro_audio, extracted_title = await asyncio.gather(
         asyncio.to_thread(
             session.start_interview,
             cv_text=body.cv_text,
@@ -230,6 +270,7 @@ async def start_interview(
             candidate_name=body.candidate_name,
         ),
         text_to_speech(INTRO_QUESTION),
+        asyncio.to_thread(extract_job_title, body.jd_text),
     )
 
     question = result.get("question") or ""
@@ -244,12 +285,16 @@ async def start_interview(
     audio_bytes = intro_audio if question == INTRO_QUESTION else await text_to_speech(question)
     audio_base64 = base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else ""
 
-    # Persist to database (after both gather results are ready)
+    job_title = (body.job_title or "").strip() or extracted_title
+
+    # Persist to database (after all gather results are ready)
     await save_session_to_db(
         session_id=session_id,
         user_id=current_user.id,
         cv_text=body.cv_text,
         jd_text=body.jd_text,
+        job_title=job_title,
+        parent_interview_id=parent_id,
     )
 
     logger.info(
@@ -362,3 +407,117 @@ async def get_interview_history(
         }
         for iv in interviews
     ]
+
+
+# --------------------------------------------------------------- history router
+# Separate prefix: client.js calls /interviews/*, this file's router is /interview/*.
+history_router = APIRouter(prefix="/interviews", tags=["interviews"])
+
+# hire_recommendation is internal scoring language; the UI speaks readiness levels.
+READINESS_LABELS = {
+    "Strong hire": "Interview Ready",
+    "Hire": "Almost Ready",
+    "Lean hire": "Getting There",
+    "No hire": "Needs Practice",
+}
+
+
+def _readiness(recommendation: Optional[str]) -> str:
+    return READINESS_LABELS.get(recommendation or "", "Practice Complete")
+
+
+@history_router.get("/history")
+async def get_history(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Last 20 interviews for the caller, each with its score and its parent attempt's score."""
+    parent = aliased(Interview)
+    parent_score = aliased(Score)
+
+    rows = (
+        await db.execute(
+            select(
+                Interview.id,
+                Interview.session_id,
+                Interview.job_title,
+                Interview.started_at,
+                Interview.is_complete,
+                Interview.parent_interview_id,
+                Score.overall_score,
+                Score.hire_recommendation,
+                parent_score.overall_score.label("parent_score"),
+            )
+            .outerjoin(Score, Score.interview_id == Interview.id)
+            .outerjoin(parent, parent.id == Interview.parent_interview_id)
+            .outerjoin(parent_score, parent_score.interview_id == parent.id)
+            .where(Interview.user_id == current_user.id)
+            .order_by(Interview.started_at.desc())
+            .limit(20)
+        )
+    ).all()
+
+    return [
+        {
+            "id": str(row.id),
+            "session_id": row.session_id,
+            "job_title": row.job_title or "Practice Interview",
+            "overall_score": row.overall_score,
+            "hire_recommendation": row.hire_recommendation,
+            "readiness": _readiness(row.hire_recommendation),
+            "is_complete": row.is_complete,
+            # interviews has no created_at column; started_at is the equivalent
+            "created_at": row.started_at.isoformat() if row.started_at else None,
+            "parent_interview_id": str(row.parent_interview_id) if row.parent_interview_id else None,
+            "parent_score": row.parent_score,
+        }
+        for row in rows
+    ]
+
+
+@history_router.get("/{interview_id}/feedback")
+async def get_feedback(
+    interview_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Full scores JSON for one interview, in the shape FeedbackPage already renders."""
+    try:
+        row_id = uuid.UUID(interview_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found")
+
+    interview = (
+        await db.execute(
+            select(Interview).where(Interview.id == row_id, Interview.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
+    if interview is None:
+        # 404, not 403 — don't confirm that another user's interview exists
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found")
+
+    score = (
+        await db.execute(select(Score).where(Score.interview_id == interview.id))
+    ).scalar_one_or_none()
+    if score is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No feedback recorded for this interview yet",
+        )
+
+    detailed = score.detailed_feedback or {}
+    return {
+        "id": str(interview.id),
+        "session_id": interview.session_id,
+        "job_title": interview.job_title or "Practice Interview",
+        "created_at": interview.started_at.isoformat() if interview.started_at else None,
+        "overall_score": score.overall_score,
+        "hire_recommendation": score.hire_recommendation,
+        "readiness": _readiness(score.hire_recommendation),
+        "domain_scores": score.domain_scores or {},
+        "summary_feedback": score.summary_feedback,
+        "summary": score.summary_feedback,
+        "strengths": detailed.get("strengths") or [],
+        "improvements": detailed.get("improvements") or [],
+        "detailed_feedback": detailed,
+    }

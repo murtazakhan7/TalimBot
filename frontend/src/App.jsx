@@ -1,5 +1,6 @@
 import { Navigate, Route, BrowserRouter as Router, Routes } from 'react-router-dom';
 import FeedbackPage from './pages/FeedbackPage';
+import HistoryPage from './pages/HistoryPage';
 import InterviewPage from './pages/InterviewPage';
 import LoginPage from './pages/LoginPage';
 import UploadPage from './pages/UploadPage';
@@ -38,6 +39,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <FeedbackPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/history"
+          element={
+            <ProtectedRoute>
+              <HistoryPage />
             </ProtectedRoute>
           }
         />

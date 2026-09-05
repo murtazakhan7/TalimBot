@@ -1,4 +1,4 @@
-"""TaleemBot LangGraph interview engine.
+"""TalimBot LangGraph interview engine.
 
 Stateful directed graph with five nodes (domain_extractor, question_generator,
 answer_recorder, coverage_tracker, evaluator) that enforces fair coverage of
@@ -38,7 +38,7 @@ except ModuleNotFoundError:  # langgraph-checkpoint-postgres not installed yet
 
 load_dotenv()
 
-logger = logging.getLogger("taleembot.interview_graph")
+logger = logging.getLogger("talimbot.interview_graph")
 
 MAX_QUESTIONS = 5
 INTRO_QUESTION = (
@@ -51,7 +51,7 @@ DEFAULT_DOMAINS = [
 ]
 
 _EXTRACTOR_SYSTEM = (
-    "You are the domain-extraction stage of TaleemBot, an AI interview engine. "
+    "You are the domain-extraction stage of TalimBot, an AI interview engine. "
     "Read the job description and the candidate's CV, then identify exactly 2 core "
     "skill domains the company actually cares about for this role. Return ONLY a "
     "JSON array of 2 short domain names (2-5 words each), e.g. "
@@ -68,7 +68,7 @@ _CV_SUMMARY_SYSTEM = """You are a recruitment assistant. Compress the provided C
 Be factual. Only include what is explicitly stated. Do not infer or embellish."""
 
 _QUESTION_SYSTEM = (
-    "You are TaleemBot, a senior interviewer conducting a structured voice interview. "
+    "You are TalimBot, a senior interviewer conducting a structured voice interview. "
     "Ask exactly ONE question per turn. The question is spoken aloud by a TTS voice, "
     "so keep it conversational, natural and under 60 words. Never reveal scoring, "
     "domains covered, or that you are an AI state machine. Output only the question "
@@ -208,6 +208,23 @@ def _summarize_cv(cv_text: str) -> str:
     return _ask_llm(_CV_SUMMARY_SYSTEM, cv_text[:8000], temperature=0.1).strip()
 
 
+_JOB_TITLE_SYSTEM = (
+    "Extract only the job title from this job description. Return just the title, "
+    "nothing else. If unclear, return 'Software Engineer'."
+)
+
+
+def extract_job_title(jd_text: str) -> str:
+    """Sync like every other graph-side LLM call; never blocks interview start."""
+    try:
+        title = _ask_llm(_JOB_TITLE_SYSTEM, (jd_text or "")[:2000], temperature=0.1)
+        title = title.strip().strip('"').strip("'").strip()
+    except Exception as exc:
+        logger.warning("Job title extraction failed (%s); using default", exc)
+        title = ""
+    return (title or "Software Engineer")[:255]
+
+
 # -------------------------------------------------------------------------- nodes
 
 def domain_extractor(state: InterviewState) -> dict:
@@ -244,7 +261,12 @@ def question_generator(state: InterviewState) -> dict:
 
     # Determine if this is an opener or follow-up based on qa_pairs count for this domain
     domain_qa_count = sum(1 for p in state.get("qa_pairs", []) if p["domain"] == domain)
-    
+
+    # Question generation only ever sees the last two exchanges, so prompt size
+    # stays flat as the interview grows. The evaluator still gets the full transcript.
+    recent_pairs = state.get("qa_pairs", [])[-2:]
+    conversation = "\n".join(f"Q: {p['question']}\nA: {p['answer']}" for p in recent_pairs)
+
     if domain_qa_count == 0:
         # Opener question for this domain
         temp = 0.8
@@ -252,18 +274,17 @@ def question_generator(state: InterviewState) -> dict:
             f"This opens the '{domain}' domain of the interview with {name}.\n"
             f"JOB DESCRIPTION (excerpt):\n{_clip(state.get('jd_text', ''), 3000)}\n\n"
             f"CANDIDATE PROFILE:\n{state.get('cv_summary', '')}\n\n"
+            f"RECENT CONVERSATION:\n{conversation}\n\n"
             f"Ask ONE opening question that assesses {domain} for this role. Where the "
             f"profile shows relevant experience, anchor the question to it so the candidate "
             f"can demonstrate real depth."
         )
     else:
-        # Follow-up question based on last answer in this domain
+        # Follow-up question based on the candidate's last answers
         temp = 0.7
-        history = [p for p in state.get("qa_pairs", []) if p["domain"] == domain][-1:]
-        transcript = "\n".join(f"Q: {p['question']}\nA: {p['answer']}" for p in history)
         human = (
             f"You are in the '{domain}' domain with {name}.\n"
-            f"Last exchange:\n{transcript}\n\n"
+            f"RECENT CONVERSATION:\n{conversation}\n\n"
             f"Ask ONE targeted follow-up to the candidate's last answer: probe for "
             f"concrete detail, challenge vague claims, or explore trade-offs. Do not "
             f"repeat an earlier question and do not switch topics."

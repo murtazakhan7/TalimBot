@@ -1,4 +1,4 @@
-"""TaleemBot FastAPI application entry point."""
+"""TalimBot FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
 
@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.auth_router import router as auth_router
 from backend.db import create_tables
 from backend.doc_parser_router import router as doc_parser_router
-from backend.interview_router import router as interview_router
+from backend.interview_router import history_router, router as interview_router
 from backend.proctor_router import router as proctor_router
 
 load_dotenv()
@@ -42,6 +42,7 @@ app.add_middleware(
 # Register routers
 app.include_router(auth_router)
 app.include_router(interview_router)
+app.include_router(history_router)
 app.include_router(doc_parser_router)
 app.include_router(proctor_router)
 

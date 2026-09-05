@@ -48,8 +48,12 @@ export default function FeedbackPage() {
   }
 
   function handlePracticeAgain() {
-    // Clear all session data
+    // Keep a link to this attempt so the next one can show improvement
+    const currentInterviewId = sessionStorage.getItem('session_id');
     sessionStorage.clear();
+    if (currentInterviewId) {
+      sessionStorage.setItem('parent_interview_id', currentInterviewId);
+    }
     navigate('/upload');
   }
 

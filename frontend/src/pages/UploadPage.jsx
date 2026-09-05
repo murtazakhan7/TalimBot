@@ -101,6 +101,9 @@ export default function UploadPage() {
   }
 
   async function handleStartInterview() {
+    // Read the lineage link before the clear() below wipes it
+    const parentInterviewId = sessionStorage.getItem('parent_interview_id') || null;
+
     // Clear sessionStorage to prevent bleed between sessions
     sessionStorage.clear();
 
@@ -114,10 +117,12 @@ export default function UploadPage() {
     setLoadingMessage('Reading your CV...');
 
     try {
-      const data = await startInterview(candidateName, cvText, jdText);
+      const data = await startInterview(candidateName, cvText, jdText, parentInterviewId);
       sessionStorage.setItem('session_id', data.session_id);
       sessionStorage.setItem('question_text', data.question_text);
       sessionStorage.setItem('audio_base64', data.audio_base64 || '');
+      // Consumed — a later attempt should not re-link to the same parent
+      sessionStorage.removeItem('parent_interview_id');
       navigate('/interview');
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to start interview. Please try again.');
@@ -149,9 +154,14 @@ export default function UploadPage() {
       {/* Top bar */}
       <div style={styles.topBar}>
         <Logo size={40} />
-        <button onClick={handleLogout} style={styles.logoutBtn}>
-          Logout
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button onClick={() => navigate('/history')} style={styles.historyBtn}>
+            My Interviews
+          </button>
+          <button onClick={handleLogout} style={styles.logoutBtn}>
+            Logout
+          </button>
+        </div>
       </div>
 
       <div style={styles.content}>
@@ -302,6 +312,16 @@ const styles = {
     alignItems: 'center',
     padding: '16px 32px',
     borderBottom: '1px solid #1e1e35',
+  },
+  historyBtn: {
+    padding: '10px 20px',
+    borderRadius: '6px',
+    border: '1px solid #6366f1',
+    backgroundColor: 'transparent',
+    color: '#6366f1',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '500',
   },
   logoutBtn: {
     padding: '4px 8px',

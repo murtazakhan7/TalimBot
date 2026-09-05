@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useVoiceRecorder from '../hooks/useVoiceRecorder';
 import { logProctorEvent } from '../api/client';
@@ -11,6 +11,7 @@ export default function InterviewPage() {
   const proctorTimerRef = useRef(null);
   const micLevelRef = useRef(null);
   const animFrameRef = useRef(null);
+  const typeIntervalRef = useRef(null);
 
   // Read session data
   const sessionId = sessionStorage.getItem('session_id');
@@ -27,6 +28,31 @@ export default function InterviewPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [canReplay, setCanReplay] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(120);
+  const [isThinking, setIsThinking] = useState(false);
+  const [displayedQuestion, setDisplayedQuestion] = useState(initialQuestionText);
+
+  // Reveal the question word by word so the interviewer reads as thinking, not instant
+  const typeQuestion = useCallback((text) => {
+    if (typeIntervalRef.current) clearInterval(typeIntervalRef.current);
+    const words = (text || '').split(' ');
+    // Tiered reveal duration: short questions read fast, long ones get breathing room
+    const totalMs = words.length <= 15 ? 4000 : words.length <= 35 ? 7000 : 10000;
+    const delay = totalMs / words.length;
+    let i = 0;
+    setDisplayedQuestion('');
+    typeIntervalRef.current = setInterval(() => {
+      if (i < words.length) {
+        // Capture the word now: the updater runs at render time, after i has advanced
+        const word = words[i];
+        const isFirst = i === 0;
+        setDisplayedQuestion(prev => prev + (isFirst ? '' : ' ') + word);
+        i++;
+      } else {
+        clearInterval(typeIntervalRef.current);
+        typeIntervalRef.current = null;
+      }
+    }, delay);
+  }, []);
 
   // Check session validity on mount
   useEffect(() => {
@@ -40,16 +66,23 @@ export default function InterviewPage() {
   // Voice recorder hook
   const { isRecording, isProcessing, startRecording, stopRecording, error: recorderError } = useVoiceRecorder({
     sessionId,
-    onQuestionReceived: (audioUrl, questionText, domain) => {
+    onQuestionReceived: async (audioUrl, questionText, domain) => {
+      // Brief human pause so the next question doesn't fire the instant transcription ends
+      setIsThinking(true);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsThinking(false);
+
       setCurrentQuestion(questionText);
-      
+
       // Increment question counter
       setQuestionNumber(prev => prev + 1);
-      
+
       if (domain) {
         setCurrentDomain(domain);
         sessionStorage.setItem('current_domain', domain);
       }
+
+      typeQuestion(questionText);
 
       // Play the audio
       if (audioUrl && audioRef.current) {
@@ -74,6 +107,14 @@ export default function InterviewPage() {
       }
     }
     // If no audio, candidate's turn starts immediately
+  }, []);
+
+  // Type out the opening question too; cancel the animation if the page unmounts
+  useEffect(() => {
+    typeQuestion(initialQuestionText);
+    return () => {
+      if (typeIntervalRef.current) clearInterval(typeIntervalRef.current);
+    };
   }, []);
 
   // Timer countdown during recording
@@ -195,7 +236,7 @@ export default function InterviewPage() {
   }
 
   // Determine turn state
-  const isCandidateTurn = !isPlaying && !isRecording && !isProcessing;
+  const isCandidateTurn = !isPlaying && !isRecording && !isProcessing && !isThinking;
 
   // Format time as M:SS
   const formatTime = (seconds) => {
@@ -279,10 +320,20 @@ export default function InterviewPage() {
           </div>
         )}
 
+        {isThinking && (
+          <div style={styles.turnBannerThinking}>
+            <div style={styles.turnBannerIcon}>🤔</div>
+            <div>
+              <div style={styles.turnBannerTitle}>Considering your answer...</div>
+              <div style={styles.turnBannerSubtitle}>The interviewer is formulating the next question</div>
+            </div>
+          </div>
+        )}
+
         {/* Question display */}
         <div style={styles.questionCard}>
           <div style={styles.questionLabel}>Interviewer's Question</div>
-          <h2 style={styles.questionText}>{currentQuestion}</h2>
+          <h2 style={styles.questionText}>{displayedQuestion}</h2>
         </div>
 
         {canReplay && !isRecording && !isProcessing && (
@@ -475,6 +526,17 @@ const styles = {
     alignItems: 'center',
     gap: '16px',
     color: '#64748b',
+  },
+  turnBannerThinking: {
+    width: '100%',
+    maxWidth: '700px',
+    padding: '12px 32px',
+    backgroundColor: '#1e1b4b',
+    borderRadius: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
+    color: '#a5b4fc',
   },
   turnBannerIcon: {
     fontSize: '24px',

@@ -66,11 +66,12 @@ export async function parseJDText(text) {
 }
 
 // ─ Interview orchestration ─────────────────────────────────────────────────
-export async function startInterview(candidateName, cvText, jdText) {
+export async function startInterview(candidateName, cvText, jdText, parentInterviewId = null) {
   const res = await client.post('/interview/start', {
     candidate_name: candidateName,
     cv_text: cvText,
     jd_text: jdText,
+    parent_interview_id: parentInterviewId,
   });
   return res.data; // { session_id, question_text, audio_base64 }
 }
@@ -101,6 +102,17 @@ export async function submitAnswerText(sessionId, transcript) {
 
 export async function getInterviewStatus(sessionId) {
   const res = await client.get(`/interview/${sessionId}/status`);
+  return res.data;
+}
+
+// ─ Interview history (/interviews router, not the /interview session routes) ──
+export async function getInterviewHistory() {
+  const res = await client.get('/interviews/history');
+  return res.data;
+}
+
+export async function getInterviewFeedback(interviewId) {
+  const res = await client.get(`/interviews/${interviewId}/feedback`);
   return res.data;
 }
 
