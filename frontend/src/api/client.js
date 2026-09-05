@@ -45,6 +45,11 @@ export async function registerUser(email, password, fullName) {
   return res.data; // { id, email }
 }
 
+export async function getCurrentUser() {
+  const res = await client.get('/auth/me');
+  return res.data; // { email, full_name }
+}
+
 // ── Document parsing ────────────────────────────────────────────────────────
 export async function parseCV(file) {
   const form = new FormData();
@@ -98,6 +103,23 @@ export async function submitAnswerText(sessionId, transcript) {
     { transcript },
     { responseType: 'blob' }
   );
+}
+
+/**
+ * Ask for the current question in simpler wording. Does not consume an interview
+ * turn — returns { rephrased_question }.
+ */
+export async function paraphraseQuestion(sessionId, questionText) {
+  const res = await client.post(`/interview/${sessionId}/paraphrase`, { question_text: questionText });
+  return res.data; // { rephrased_question }
+}
+
+/**
+ * Move on without recording an answer. Returns the FULL axios response so the
+ * caller can inspect X-Interview-Done / X-Question-Text and the audio blob.
+ */
+export async function skipQuestion(sessionId) {
+  return client.post(`/interview/${sessionId}/skip`, {}, { responseType: 'blob' });
 }
 
 export async function getInterviewStatus(sessionId) {

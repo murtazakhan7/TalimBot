@@ -23,7 +23,7 @@ export default function LoginPage() {
   useEffect(() => {
     const token = localStorage.getItem('access_token');
     if (token) {
-      navigate('/upload');
+      navigate('/dashboard');
     }
   }, [navigate]);
 
@@ -35,7 +35,7 @@ export default function LoginPage() {
     try {
       const data = await loginUser(loginEmail, loginPassword);
       localStorage.setItem('access_token', data.access_token);
-      navigate('/upload');
+      navigate('/dashboard');
     } catch (err) {
       setError(err.response?.data?.detail || 'Login failed. Please check your credentials.');
     } finally {

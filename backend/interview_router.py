@@ -27,7 +27,12 @@ from backend.db import (
     save_scores_to_db,
     save_session_to_db,
 )
-from langgraph_engine.interview_graph import INTRO_QUESTION, InterviewSession, extract_job_title
+from langgraph_engine.interview_graph import (
+    INTRO_QUESTION,
+    InterviewSession,
+    extract_job_title,
+    rephrase_question,
+)
 
 logger = logging.getLogger("talimbot.interview")
 
@@ -64,17 +69,17 @@ class TextAnswerBody(BaseModel):
     transcript: str
 
 
-@router.post("/{session_id}/answer-text")
-async def submit_answer_text(
-    session_id: str,
-    body: TextAnswerBody,
-    current_user: Annotated[User, Depends(get_current_user)],
-):
-    """Accept transcript text directly instead of audio. Fallback path for manual text entry."""
-    transcript = body.transcript.strip()
-    if not transcript:
-        raise HTTPException(status_code=400, detail="Transcript cannot be empty")
+class ParaphraseRequest(BaseModel):
+    question_text: str
 
+
+# A real sentence rather than a meta-tag, so the evaluator scores it (low) instead
+# of having to interpret "[candidate chose to move on]".
+SKIP_TRANSCRIPT = "I'm not confident about this topic and would like to move on."
+
+
+async def _answer_turn(session_id: str, transcript: str) -> Response:
+    """Run one LangGraph turn from a transcript and return the next question as audio."""
     session = InterviewSession(session_id=session_id)
     result = await asyncio.to_thread(session.submit_answer, transcript)
 
@@ -100,6 +105,59 @@ async def submit_answer_text(
         "X-Current-Domain": sanitize_header(result.get("current_domain") or ""),
     }
     return Response(content=audio_bytes, media_type="audio/mpeg", headers=headers)
+
+
+@router.post("/{session_id}/answer-text")
+async def submit_answer_text(
+    session_id: str,
+    body: TextAnswerBody,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Accept transcript text directly instead of audio. Fallback path for manual text entry."""
+    transcript = body.transcript.strip()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Transcript cannot be empty")
+
+    return await _answer_turn(session_id, transcript)
+
+
+@router.post("/{session_id}/skip")
+async def skip_question(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Move on without recording audio: submits a fixed low-scoring answer and returns
+    the next question in the same shape as /answer-text."""
+    return await _answer_turn(session_id, SKIP_TRANSCRIPT)
+
+
+@router.post("/{session_id}/paraphrase")
+async def paraphrase_question(
+    session_id: str,
+    request: ParaphraseRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Rephrase the current question more simply. Does not consume a LangGraph turn."""
+    question_text = request.question_text.strip()
+    if not question_text:
+        raise HTTPException(status_code=400, detail="Question text cannot be empty")
+
+    try:
+        rephrased = await asyncio.to_thread(rephrase_question, question_text)
+    except Exception as exc:
+        logger.error("Paraphrase failed for session %s: %s", session_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not rephrase the question. Please try again.",
+        ) from exc
+
+    if not rephrased:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not rephrase the question. Please try again.",
+        )
+
+    return {"rephrased_question": rephrased}
 
 
 async def transcribe_audio(audio_bytes: bytes, mimetype: str = "audio/webm") -> str:

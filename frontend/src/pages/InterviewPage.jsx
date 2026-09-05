@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useVoiceRecorder from '../hooks/useVoiceRecorder';
-import { logProctorEvent } from '../api/client';
+import { logProctorEvent, paraphraseQuestion, skipQuestion } from '../api/client';
 import Logo from '../components/Logo';
 
 export default function InterviewPage() {
@@ -30,6 +30,7 @@ export default function InterviewPage() {
   const [timeRemaining, setTimeRemaining] = useState(120);
   const [isThinking, setIsThinking] = useState(false);
   const [displayedQuestion, setDisplayedQuestion] = useState(initialQuestionText);
+  const [isParaphrasing, setIsParaphrasing] = useState(false);
 
   // Reveal the question word by word so the interviewer reads as thinking, not instant
   const typeQuestion = useCallback((text) => {
@@ -63,37 +64,50 @@ export default function InterviewPage() {
     }
   }, [navigate, sessionId]);
 
+  // Named so the Move On button can drive the same turn transition as a recorded answer
+  const handleQuestionReceived = useCallback(async (audioUrl, questionText, domain) => {
+    // Brief human pause so the next question doesn't fire the instant transcription ends
+    setIsThinking(true);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    setIsThinking(false);
+
+    setCurrentQuestion(questionText);
+
+    // Increment question counter
+    setQuestionNumber(prev => prev + 1);
+
+    if (domain) {
+      setCurrentDomain(domain);
+      sessionStorage.setItem('current_domain', domain);
+    }
+
+    typeQuestion(questionText);
+
+    // Play the audio
+    if (audioUrl && audioRef.current) {
+      audioRef.current.src = audioUrl;
+      audioRef.current.play().catch((err) => console.warn('Audio play failed:', err));
+    }
+  }, [typeQuestion]);
+
+  const handleInterviewComplete = useCallback((scores) => {
+    sessionStorage.setItem('interview_scores', JSON.stringify(scores));
+    navigate('/feedback');
+  }, [navigate]);
+
   // Voice recorder hook
-  const { isRecording, isProcessing, startRecording, stopRecording, error: recorderError } = useVoiceRecorder({
+  const {
+    isRecording,
+    isProcessing,
+    setIsProcessing,
+    startRecording,
+    stopRecording,
+    error: recorderError,
+    setError,
+  } = useVoiceRecorder({
     sessionId,
-    onQuestionReceived: async (audioUrl, questionText, domain) => {
-      // Brief human pause so the next question doesn't fire the instant transcription ends
-      setIsThinking(true);
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      setIsThinking(false);
-
-      setCurrentQuestion(questionText);
-
-      // Increment question counter
-      setQuestionNumber(prev => prev + 1);
-
-      if (domain) {
-        setCurrentDomain(domain);
-        sessionStorage.setItem('current_domain', domain);
-      }
-
-      typeQuestion(questionText);
-
-      // Play the audio
-      if (audioUrl && audioRef.current) {
-        audioRef.current.src = audioUrl;
-        audioRef.current.play().catch((err) => console.warn('Audio play failed:', err));
-      }
-    },
-    onInterviewComplete: (scores) => {
-      sessionStorage.setItem('interview_scores', JSON.stringify(scores));
-      navigate('/feedback');
-    },
+    onQuestionReceived: handleQuestionReceived,
+    onInterviewComplete: handleInterviewComplete,
   });
 
   // Handle first question audio playback on mount
@@ -206,6 +220,50 @@ export default function InterviewPage() {
       stopRecording();
     } else {
       startRecording();
+    }
+  }
+
+  async function handleParaphrase() {
+    setIsParaphrasing(true);
+    try {
+      const data = await paraphraseQuestion(sessionId, currentQuestion);
+      typeQuestion(data.rephrased_question);
+      setCurrentQuestion(data.rephrased_question);
+    } catch (err) {
+      console.error('Paraphrase failed:', err);
+    } finally {
+      setIsParaphrasing(false);
+    }
+  }
+
+  async function handleSkip() {
+    if (!window.confirm('Move on to the next question?')) return;
+    setIsProcessing(true);
+    try {
+      const response = await skipQuestion(sessionId);
+      const doneHeader = response.headers['x-interview-done'];
+      const questionText = response.headers['x-question-text'] || '';
+      const domainText = response.headers['x-current-domain'] || '';
+
+      if (doneHeader === 'true') {
+        // Scores arrive as JSON but axios read the body as a Blob
+        let json;
+        try {
+          const text = await response.data.text();
+          json = JSON.parse(text);
+        } catch {
+          json = { done: true, scores: null };
+        }
+        handleInterviewComplete(json.scores || {});
+      } else {
+        const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        handleQuestionReceived(audioUrl, questionText, domainText);
+      }
+    } catch (err) {
+      setError('Failed to skip. Please try again.');
+    } finally {
+      setIsProcessing(false);
     }
   }
 
@@ -335,6 +393,25 @@ export default function InterviewPage() {
           <div style={styles.questionLabel}>Interviewer's Question</div>
           <h2 style={styles.questionText}>{displayedQuestion}</h2>
         </div>
+
+        {isCandidateTurn && !isRecording && !isProcessing && (
+          <div style={styles.questionActions}>
+            <button
+              onClick={handleParaphrase}
+              disabled={isParaphrasing}
+              style={{ ...styles.actionBtn, ...(isParaphrasing ? styles.actionBtnDisabled : {}) }}
+            >
+              {isParaphrasing ? 'Rephrasing...' : '🔄 Rephrase Question'}
+            </button>
+            <button
+              onClick={handleSkip}
+              disabled={isParaphrasing}
+              style={{ ...styles.actionBtn, ...(isParaphrasing ? styles.actionBtnDisabled : {}) }}
+            >
+              ⏭ Move On
+            </button>
+          </div>
+        )}
 
         {canReplay && !isRecording && !isProcessing && (
           <button
@@ -575,6 +652,26 @@ const styles = {
     margin: 0,
     textAlign: 'center',
     color: '#f1f5f9',
+  },
+  questionActions: {
+    display: 'flex',
+    gap: '12px',
+    justifyContent: 'center',
+    marginTop: '8px',
+  },
+  actionBtn: {
+    padding: '8px 16px',
+    borderRadius: '6px',
+    border: '1px solid #1e1e35',
+    backgroundColor: 'transparent',
+    color: '#64748b',
+    fontSize: '13px',
+    cursor: 'pointer',
+    transition: 'color 0.2s, border-color 0.2s',
+  },
+  actionBtnDisabled: {
+    opacity: 0.5,
+    cursor: 'not-allowed',
   },
   recordArea: {
     display: 'flex',

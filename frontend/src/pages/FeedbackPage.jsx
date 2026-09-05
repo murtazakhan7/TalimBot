@@ -92,7 +92,8 @@ ${summaryText}`;
             {copyStatus || 'Copy Summary'}
           </button>
           <button onClick={handlePracticeAgain} style={styles.practiceBtn}>
-            Practice Again
+            <span>Practice Again</span>
+            <span style={styles.practiceBtnSub}>Same role</span>
           </button>
         </div>
       </div>
@@ -266,6 +267,12 @@ const styles = {
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '500',
+  },
+  practiceBtnSub: {
+    display: 'block',
+    fontSize: '10px',
+    opacity: 0.7,
+    fontWeight: '400',
   },
   content: {
     maxWidth: '800px',

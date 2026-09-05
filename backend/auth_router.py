@@ -131,3 +131,11 @@ async def login(
         data={"sub": user.email, "user_id": str(user.id)}
     )
     return Token(access_token=access_token, token_type="bearer")
+
+
+@router.get("/me")
+async def get_me(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Name for the dashboard greeting — the JWT carries only sub/user_id."""
+    return {"email": current_user.email, "full_name": current_user.full_name}

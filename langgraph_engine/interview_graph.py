@@ -153,7 +153,7 @@ def get_llm():
     global _model
     if _model is None:
         _model = ChatOpenAI(
-            model=os.getenv("QWEN_MODEL", "qwen3.6-plus"),
+            model=os.getenv("QWEN_MODEL", "qwen3.7-plus"),
             api_key=os.getenv("DASHSCOPE_API_KEY"),
             base_url=os.getenv("DASHSCOPE_BASE_URL"),
         )
@@ -225,6 +225,18 @@ def extract_job_title(jd_text: str) -> str:
     return (title or "Software Engineer")[:255]
 
 
+_PARAPHRASE_SYSTEM = (
+    "Rephrase this interview question in simpler, clearer language. Keep the same "
+    "topic. Return only the rephrased question, nothing else."
+)
+
+
+def rephrase_question(question_text: str) -> str:
+    """Simpler wording for the question already asked; does not consume a graph turn."""
+    rephrased = _ask_llm(_PARAPHRASE_SYSTEM, question_text, temperature=0.7)
+    return rephrased.strip().strip('"').strip()
+
+
 # -------------------------------------------------------------------------- nodes
 
 def domain_extractor(state: InterviewState) -> dict:
@@ -260,12 +272,18 @@ def question_generator(state: InterviewState) -> dict:
     name = state.get("candidate_name") or "Candidate"
 
     # Determine if this is an opener or follow-up based on qa_pairs count for this domain
-    domain_qa_count = sum(1 for p in state.get("qa_pairs", []) if p["domain"] == domain)
+    qa_pairs = state.get("qa_pairs", [])
+    domain_qa_count = sum(1 for p in qa_pairs if p["domain"] == domain)
 
-    # Question generation only ever sees the last two exchanges, so prompt size
-    # stays flat as the interview grows. The evaluator still gets the full transcript.
-    recent_pairs = state.get("qa_pairs", [])[-2:]
-    conversation = "\n".join(f"Q: {p['question']}\nA: {p['answer']}" for p in recent_pairs)
+    # On domain change or first question in domain: no history needed
+    # On follow-up within same domain: only the last answer
+    last_answer_context = ""
+    if qa_pairs:
+        last_pair = qa_pairs[-1]
+        if last_pair.get("domain") == domain:
+            # Same domain — include only the candidate's last answer
+            last_answer_context = f"Candidate's previous answer: {last_pair.get('answer', '')}"
+        # Different domain — pass nothing from history
 
     if domain_qa_count == 0:
         # Opener question for this domain
@@ -274,17 +292,16 @@ def question_generator(state: InterviewState) -> dict:
             f"This opens the '{domain}' domain of the interview with {name}.\n"
             f"JOB DESCRIPTION (excerpt):\n{_clip(state.get('jd_text', ''), 3000)}\n\n"
             f"CANDIDATE PROFILE:\n{state.get('cv_summary', '')}\n\n"
-            f"RECENT CONVERSATION:\n{conversation}\n\n"
             f"Ask ONE opening question that assesses {domain} for this role. Where the "
             f"profile shows relevant experience, anchor the question to it so the candidate "
             f"can demonstrate real depth."
         )
     else:
-        # Follow-up question based on the candidate's last answers
+        # Follow-up question based on the candidate's last answer
         temp = 0.7
         human = (
             f"You are in the '{domain}' domain with {name}.\n"
-            f"RECENT CONVERSATION:\n{conversation}\n\n"
+            f"{last_answer_context}\n\n"
             f"Ask ONE targeted follow-up to the candidate's last answer: probe for "
             f"concrete detail, challenge vague claims, or explore trade-offs. Do not "
             f"repeat an earlier question and do not switch topics."

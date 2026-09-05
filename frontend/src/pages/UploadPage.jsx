@@ -153,7 +153,13 @@ export default function UploadPage() {
     <div style={styles.container}>
       {/* Top bar */}
       <div style={styles.topBar}>
-        <Logo size={40} />
+        <div
+          onClick={() => navigate('/dashboard')}
+          title="Back to dashboard"
+          style={styles.logoLink}
+        >
+          <Logo size={40} />
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button onClick={() => navigate('/history')} style={styles.historyBtn}>
             My Interviews
@@ -322,6 +328,9 @@ const styles = {
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '500',
+  },
+  logoLink: {
+    cursor: 'pointer',
   },
   logoutBtn: {
     padding: '4px 8px',

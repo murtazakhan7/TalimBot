@@ -76,6 +76,12 @@ export default function HistoryPage() {
     }
   }
 
+  function handlePracticeAgain(interviewId) {
+    sessionStorage.clear();
+    sessionStorage.setItem('parent_interview_id', interviewId);
+    navigate('/upload');
+  }
+
   return (
     <div style={styles.container}>
       {/* Top bar */}
@@ -162,6 +168,15 @@ export default function HistoryPage() {
                   ) : (
                     <div style={styles.inProgress}>Not scored yet</div>
                   )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlePracticeAgain(item.id);
+                    }}
+                    style={styles.practiceAgainBtn}
+                  >
+                    🔄 Practice Again
+                  </button>
                   <div style={styles.chevron}>{isOpen ? '▾' : '▸'}</div>
                 </div>
               </div>
@@ -452,6 +467,16 @@ const styles = {
     fontSize: '13px',
     color: '#64748b',
     fontStyle: 'italic',
+  },
+  practiceAgainBtn: {
+    padding: '6px 14px',
+    borderRadius: '6px',
+    border: '1px solid #6366f1',
+    backgroundColor: 'transparent',
+    color: '#6366f1',
+    fontSize: '12px',
+    cursor: 'pointer',
+    fontWeight: '500',
   },
   chevron: {
     color: '#475569',

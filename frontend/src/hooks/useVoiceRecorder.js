@@ -116,5 +116,5 @@ export default function useVoiceRecorder({ sessionId, onQuestionReceived, onInte
     }
   }, [sessionId, onQuestionReceived, onInterviewComplete, stopRecording, cleanup]);
 
-  return { isRecording, isProcessing, startRecording, stopRecording, error };
+  return { isRecording, isProcessing, setIsProcessing, startRecording, stopRecording, error, setError };
 }
