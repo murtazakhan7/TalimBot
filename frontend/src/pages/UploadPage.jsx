@@ -7,7 +7,6 @@ export default function UploadPage() {
   const navigate = useNavigate();
 
   // State
-  const [candidateName, setCandidateName] = useState('');
   const [cvText, setCvText] = useState('');
   const [jdText, setJdText] = useState('');
   const [jdRawText, setJdRawText] = useState('');
@@ -107,8 +106,9 @@ export default function UploadPage() {
     // Clear sessionStorage to prevent bleed between sessions
     sessionStorage.clear();
 
-    if (!candidateName || !cvText || !jdText) {
-      setError('Please complete all three steps before starting the interview.');
+    const candidateName = getNameFromToken();
+    if (!cvText || !jdText) {
+      setError('Please complete both steps before starting the interview.');
       return;
     }
 
@@ -131,6 +131,18 @@ export default function UploadPage() {
     }
   }
 
+  function getNameFromToken() {
+  try {
+    const token = localStorage.getItem('access_token');
+    if (!token) return 'Candidate';
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const fullName = payload.full_name || payload.name || '';
+    return fullName.split(' ')[0] || payload.email?.split('@')[0] || 'Candidate';
+  } catch {
+    return 'Candidate';
+  }
+}
+
   function handleLogout() {
     if (!window.confirm('Are you sure you want to logout?')) return;
     localStorage.removeItem('access_token');
@@ -138,7 +150,7 @@ export default function UploadPage() {
   }
 
   // Loading screen overlay
-  if (loading && candidateName && cvText && jdText) {
+  if (loading && cvText && jdText) {
     return (
       <div style={styles.loadingContainer}>
         <Logo size={60} />
@@ -176,22 +188,8 @@ export default function UploadPage() {
         {/* Error message */}
         {error && <div style={styles.error}>{error}</div>}
 
-        {/* Step 1: Candidate Name */}
-        <div style={styles.step}>
-          <div style={styles.stepHeader}>
-            <span style={styles.stepNumber}>Step 1</span>
-            <h3 style={styles.stepTitle}>Your Name</h3>
-          </div>
-          <input
-            type="text"
-            placeholder="Enter your full name"
-            value={candidateName}
-            onChange={(e) => setCandidateName(e.target.value)}
-            style={styles.input}
-          />
-        </div>
 
-        {/* Step 2: CV Upload */}
+        {/* Step 1: CV Upload */}
         <div style={styles.step}>
           <div style={styles.stepHeader}>
             <span style={styles.stepNumber}>Step 2</span>
@@ -216,7 +214,7 @@ export default function UploadPage() {
           )}
         </div>
 
-        {/* Step 3: Job Description */}
+        {/* Step 2: Job Description */}
         <div style={styles.step}>
           <div style={styles.stepHeader}>
             <span style={styles.stepNumber}>Step 3</span>
@@ -292,13 +290,13 @@ export default function UploadPage() {
         {/* Start Interview Button */}
         <button
           onClick={handleStartInterview}
-          disabled={loading || !candidateName || !cvText || !jdText}
+          disabled={loading || !cvText || !jdText}
           style={{
             ...styles.startBtn,
-            opacity: loading || !candidateName || !cvText || !jdText ? 0.5 : 1,
+            opacity: loading || !cvText || !jdText ? 0.5 : 1,
           }}
         >
-          {loading && candidateName && cvText && jdText ? 'Starting...' : 'Start Interview'}
+          {loading && cvText && jdText ? 'Starting...' : 'Start Interview'}
         </button>
       </div>
     </div>

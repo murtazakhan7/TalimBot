@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Logo from '../components/Logo';
+import { restartInterview } from '../api/client';
 
 export default function FeedbackPage() {
   const navigate = useNavigate();
   const [scores, setScores] = useState(null);
   const [copyStatus, setCopyStatus] = useState('');
+  const [isRestarting, setIsRestarting] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem('interview_scores');
@@ -18,6 +20,17 @@ export default function FeedbackPage() {
   }, [navigate]);
 
   if (!scores) return null;
+
+  if (isRestarting) {
+  return (
+    <div style={styles.loadingContainer}>
+      <Logo size={60} />
+      <div style={styles.spinner} />
+      <h2 style={styles.loadingMessage}>Setting up your next session...</h2>
+    </div>
+  );
+}
+  
 
   // Reframe hire_recommendation as readiness level
   function getReadinessLabel(recommendation) {
@@ -47,15 +60,24 @@ export default function FeedbackPage() {
     return "Keep going! Every practice session brings you closer to success.";
   }
 
-  function handlePracticeAgain() {
-    // Keep a link to this attempt so the next one can show improvement
-    const currentInterviewId = sessionStorage.getItem('session_id');
+ async function handlePracticeAgain() {
+  const currentSessionId = sessionStorage.getItem('session_id');
+  if (!currentSessionId) { navigate('/upload'); return; }
+  setIsRestarting(true);
+  try {
+    const data = await restartInterview(currentSessionId);
     sessionStorage.clear();
-    if (currentInterviewId) {
-      sessionStorage.setItem('parent_interview_id', currentInterviewId);
-    }
+    sessionStorage.setItem('session_id', data.session_id);
+    sessionStorage.setItem('question_text', data.question_text);
+    sessionStorage.setItem('audio_base64', data.audio_base64 || '');
+    navigate('/interview');
+  } catch {
+    sessionStorage.clear();
     navigate('/upload');
+  } finally {
+    setIsRestarting(false);
   }
+}
 
   async function handleCopySummary() {
     const domainLines = scores.domain_scores
@@ -91,10 +113,10 @@ ${summaryText}`;
           <button onClick={handleCopySummary} style={styles.copyBtn}>
             {copyStatus || 'Copy Summary'}
           </button>
-          <button onClick={handlePracticeAgain} style={styles.practiceBtn}>
-            <span>Practice Again</span>
-            <span style={styles.practiceBtnSub}>Same role</span>
-          </button>
+          <button onClick={handlePracticeAgain} disabled={isRestarting} style={styles.practiceBtn}>
+          <span>{isRestarting ? 'Starting...' : 'Practice Again'}</span>
+          <span style={styles.practiceBtnSub}>Same role</span>
+            </button>
         </div>
       </div>
 
@@ -486,4 +508,39 @@ const styles = {
     lineHeight: '1.7',
     color: '#d1d5db',
   },
+  loadingContainer: {
+  minHeight: '100vh',
+  background: 'linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 100%)',
+  color: '#f1f5f9',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '32px',
+  fontFamily: 'system-ui, -apple-system, sans-serif',
+},
+spinner: {
+  width: '48px',
+  height: '48px',
+  border: '4px solid #1e1e35',
+  borderTop: '4px solid #6366f1',
+  borderRadius: '50%',
+  animation: 'spin 1s linear infinite',
+},
+loadingMessage: {
+  fontSize: '20px',
+  fontWeight: '500',
+  color: '#f1f5f9',
+  margin: 0,
+},
 };
+
+if (typeof document !== 'undefined') {
+  const existing = document.getElementById('feedback-spin');
+  if (!existing) {
+    const style = document.createElement('style');
+    style.id = 'feedback-spin';
+    style.textContent = `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`;
+    document.head.appendChild(style);
+  }
+}

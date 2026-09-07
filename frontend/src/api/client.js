@@ -36,6 +36,11 @@ export async function loginUser(email, password) {
   return res.data; // { access_token, token_type }
 }
 
+export async function restartInterview(interviewId) {
+  const res = await client.post(`/interview/${interviewId}/restart`);
+  return res.data; // { session_id, question_text, audio_base64 }
+}
+
 export async function registerUser(email, password, fullName) {
   const res = await client.post('/auth/register', {
     email,

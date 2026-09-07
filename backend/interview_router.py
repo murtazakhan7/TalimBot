@@ -2,6 +2,8 @@
 
 import asyncio
 import base64
+# from datetime import time
+import time as _time
 import logging
 import os
 import unicodedata
@@ -30,7 +32,6 @@ from backend.db import (
 from langgraph_engine.interview_graph import (
     INTRO_QUESTION,
     InterviewSession,
-    extract_job_title,
     rephrase_question,
 )
 
@@ -38,9 +39,9 @@ logger = logging.getLogger("talimbot.interview")
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-TTS_MODEL = os.getenv("TTS_MODEL", "cosyvoice-v3-flash")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+# DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+# TTS_MODEL = os.getenv("TTS_MODEL", "cosyvoice-v3-flash")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
@@ -320,7 +321,7 @@ async def start_interview(
     # The intro question is hardcoded and the job title only needs the JD, so neither
     # depends on the graph — run all three concurrently. to_thread keeps the sync
     # LangGraph and LLM calls off the event loop.
-    result, intro_audio, extracted_title = await asyncio.gather(
+    result, intro_audio = await asyncio.gather(
         asyncio.to_thread(
             session.start_interview,
             cv_text=body.cv_text,
@@ -328,7 +329,6 @@ async def start_interview(
             candidate_name=body.candidate_name,
         ),
         text_to_speech(INTRO_QUESTION),
-        asyncio.to_thread(extract_job_title, body.jd_text),
     )
 
     question = result.get("question") or ""
@@ -343,7 +343,7 @@ async def start_interview(
     audio_bytes = intro_audio if question == INTRO_QUESTION else await text_to_speech(question)
     audio_base64 = base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else ""
 
-    job_title = (body.job_title or "").strip() or extracted_title
+    job_title = (body.job_title or "").strip() or body.jd_text.split("\n")[0].strip()[:255] or "Software Engineer"
 
     # Persist to database (after all gather results are ready)
     await save_session_to_db(
@@ -367,15 +367,71 @@ async def start_interview(
     )
 
 
+@router.post("/{interview_ref}/restart", response_model=StartInterviewResponse)
+async def restart_interview(
+    interview_ref: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Restart a stored interview from the CV and JD already saved against it, so the
+    candidate skips the upload step. Accepts an interviews.id or a session_id."""
+    original_id = await _resolve_parent_interview(db, interview_ref, current_user.id)
+    original = (
+        await db.execute(select(Interview).where(Interview.id == original_id))
+    ).scalar_one()
+
+    session_id = str(uuid.uuid4())
+    session = InterviewSession(session_id=session_id)
+
+    # A fresh id is mandatory: start_interview returns the checkpoint's existing question
+    # instead of restarting when it finds a current_question already stored.
+    result, intro_audio = await asyncio.gather(
+        asyncio.to_thread(
+            session.start_interview,
+            cv_text=original.cv_text,
+            jd_text=original.jd_text,
+            candidate_name=current_user.full_name or current_user.email.split("@")[0],
+        ),
+        text_to_speech(INTRO_QUESTION),
+    )
+
+    question = result.get("question") or ""
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate opening question",
+        )
+
+    audio_bytes = intro_audio if question == INTRO_QUESTION else await text_to_speech(question)
+    audio_base64 = base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else ""
+
+    await save_session_to_db(
+        session_id=session_id,
+        user_id=current_user.id,
+        cv_text=original.cv_text,
+        jd_text=original.jd_text,
+        job_title=original.job_title,
+        parent_interview_id=original.id,
+    )
+
+    logger.info(
+        "Interview restarted: session=%s parent=%s user=%s",
+        session_id, original.session_id, current_user.email,
+    )
+
+    return StartInterviewResponse(
+        session_id=session_id,
+        question_text=question,
+        audio_base64=audio_base64,
+    )
+
+
 @router.post("/{session_id}/answer")
 async def submit_answer(
     session_id: str,
     file: UploadFile = File(...),
     current_user: Annotated[User, Depends(get_current_user)] = None,
 ):
-    """Receive candidate's spoken answer, transcribe it, run LangGraph turn,
-    generate next question audio, and stream back."""
-    # Validate file type
     if not file.filename or not file.filename.lower().endswith(".webm"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -385,14 +441,16 @@ async def submit_answer(
     audio_bytes = await file.read()
 
     # Transcribe via Deepgram Nova-3
+    t = _time.time()
     transcript = await transcribe_audio(audio_bytes, file.content_type or "audio/webm")
-    logger.info("Transcript for session %s: %s", session_id, transcript[:100])
+    print(f">>> STT took {_time.time() - t:.2f}s — transcript: {transcript[:100]}")
 
-    # Run LangGraph turn (blocking LLM calls → keep them off the event loop)
+    # Run LangGraph turn
     session = InterviewSession(session_id=session_id)
+    t = _time.time()
     result = await asyncio.to_thread(session.submit_answer, transcript)
+    print(f">>> LangGraph turn took {_time.time() - t:.2f}s")
 
-    # If interview is complete, persist scores and Q&A pairs, return final result
     if result.get("interview_complete"):
         try:
             qa_pairs = session.graph.get_state(session.config).values.get("qa_pairs", [])
@@ -414,9 +472,10 @@ async def submit_answer(
             headers={"X-Interview-Done": "true"},
         )
 
-    # Not complete — convert next question to audio and stream back
     question_text = result.get("question", "")
+    t = _time.time()
     audio_bytes = await text_to_speech(question_text)
+    print(f">>> TTS took {_time.time() - t:.2f}s")
 
     headers = {
         "X-Question-Text": sanitize_header(question_text),

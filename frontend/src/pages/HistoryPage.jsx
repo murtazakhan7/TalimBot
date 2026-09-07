@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getInterviewHistory, getInterviewFeedback } from '../api/client';
+import { getInterviewHistory, getInterviewFeedback, restartInterview } from '../api/client';
 import Logo from '../components/Logo';
 
 // Same readiness framing and colours as FeedbackPage
@@ -40,6 +40,7 @@ export default function HistoryPage() {
   const [feedbackError, setFeedbackError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [practicingId, setPracticingId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,11 +77,21 @@ export default function HistoryPage() {
     }
   }
 
-  function handlePracticeAgain(interviewId) {
+async function handlePracticeAgain(interviewId) {
+  setPracticingId(interviewId);
+  try {
+    const data = await restartInterview(interviewId);
     sessionStorage.clear();
-    sessionStorage.setItem('parent_interview_id', interviewId);
-    navigate('/upload');
+    sessionStorage.setItem('session_id', data.session_id);
+    sessionStorage.setItem('question_text', data.question_text);
+    sessionStorage.setItem('audio_base64', data.audio_base64 || '');
+    navigate('/interview');
+  } catch {
+    alert('Could not restart interview. Please try again.');
+  } finally {
+    setPracticingId(null);
   }
+}
 
   return (
     <div style={styles.container}>
@@ -173,9 +184,13 @@ export default function HistoryPage() {
                       e.stopPropagation();
                       handlePracticeAgain(item.id);
                     }}
-                    style={styles.practiceAgainBtn}
+                    disabled={practicingId === item.id}
+                    style={{
+                      ...styles.practiceAgainBtn,
+                      opacity: practicingId === item.id ? 0.5 : 1,
+                    }}
                   >
-                    🔄 Practice Again
+                    {practicingId === item.id ? 'Starting...' : '🔄 Practice Again'}
                   </button>
                   <div style={styles.chevron}>{isOpen ? '▾' : '▸'}</div>
                 </div>
