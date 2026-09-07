@@ -859,6 +859,8 @@ export default function InterviewPage() {
   const [isThinking, setIsThinking] = useState(false);
   const [displayedQuestion, setDisplayedQuestion] = useState(initialQuestionText);
   const [isParaphrasing, setIsParaphrasing] = useState(false);
+  const [processingSeconds, setProcessingSeconds] = useState(0);
+
 
   const typeQuestion = useCallback((text) => {
     if (typeIntervalRef.current) clearInterval(typeIntervalRef.current);

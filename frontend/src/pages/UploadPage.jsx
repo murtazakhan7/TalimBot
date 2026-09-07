@@ -539,6 +539,7 @@ export default function UploadPage() {
   const [error, setError] = useState('');
   const [loadingMessage, setLoadingMessage] = useState('Reading your CV...');
   const [jdMode, setJdMode] = useState('text');
+  
 
   useEffect(() => {
     const token = localStorage.getItem('access_token');
