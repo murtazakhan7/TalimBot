@@ -200,39 +200,6 @@ async def transcribe_audio(audio_bytes: bytes, mimetype: str = "audio/webm") -> 
     return transcript
 
 
-# --- DASHSCOPE TTS CODE (commented out for quick revert) ---
-# async def text_to_speech(text: str) -> bytes:
-#     """Convert text to speech via DashScope TTS. Returns audio bytes."""
-#     if not text:
-#         return b""
-#
-#     if not DASHSCOPE_API_KEY or DASHSCOPE_API_KEY.startswith("your_"):
-#         logger.warning("DashScope API key not configured; returning empty audio for dev mode")
-#         return b""
-#
-#     dashscope.api_key = DASHSCOPE_API_KEY
-#
-#     try:
-#         synthesizer = SpeechSynthesizer(model=TTS_MODEL, voice="longxiaochun")
-#         audio = synthesizer.call(text)
-#
-#         if audio is None:
-#             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="TTS returned no audio")
-#
-#         return bytes(audio)
-#     except Exception as exc:
-#         err_str = str(exc).lower()
-#         # Invalid/expired key or connection refused — silently fall back to dev mode
-#         if any(kw in err_str for kw in ["invalid", "401", "unauthorized", "connection is already closed"]):
-#             logger.warning("DashScope TTS auth/connection error; returning empty audio for dev mode")
-#             return b""
-#         logger.error("DashScope TTS error: %s", exc)
-#         raise HTTPException(
-#             status_code=status.HTTP_502_BAD_GATEWAY,
-#             detail=f"TTS failed: {exc}",
-#         ) from exc
-
-
 async def text_to_speech(text: str) -> bytes:
     """Convert text to speech via ElevenLabs. Returns MP3 bytes."""
     if not ELEVENLABS_API_KEY or ELEVENLABS_API_KEY.startswith("your_"):
