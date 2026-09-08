@@ -1,7 +1,7 @@
-# 🎙️ TalimBot — AI-Powered Interview Coach & Hiring Assistant for Pakistan
+# 🎙️ TalimBot: AI-Powered Interview Coach & Hiring Assistant for Pakistan
 
 > **Alibaba Cloud AI Hackathon Submission**
-> Practice for real interviews with a voice-based AI interviewer — tailored to your CV and target role.
+> Practice for real interviews with a voice-based AI interviewer, tailored to your CV and target role.
 
 ---
 
@@ -101,7 +101,7 @@ The goal is to democratise interview preparation: anyone with a browser and a mi
     └───────────────┘
 ```
 
-The interview is orchestrated as a **LangGraph stateful graph** (`interview_graph.py`). Each node in the graph handles a discrete step — question generation, answer evaluation, domain routing, and final scoring — making the flow easy to extend and test.
+The interview is orchestrated as a **LangGraph stateful graph** (`interview_graph.py`). Each node in the graph handles a discrete step, question generation, answer evaluation, domain routing, and final scoring, making the flow easy to extend and test.
 
 ---
 
